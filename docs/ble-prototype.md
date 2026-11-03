@@ -70,9 +70,9 @@ python -m pc.buddy set thinking --label "Model request" --duration 60
 python -m pc.buddy watch
 ```
 
-Si plusieurs OpenBuddy sont présents, sélectionner son adresse. L'adresse BLE de
-la carte actuellement testée est **`AA:BB:CC:DD:EE:FF`** : elle diffère de l'adresse
-USB/Wi-Fi se terminant par `24`.
+Si plusieurs OpenBuddy sont présents, sélectionner l'adresse BLE réelle renvoyée
+par `scan`. Elle peut être différente de l'adresse USB/Wi-Fi de la carte. Les
+adresses d'exemple de la documentation publique doivent être remplacées.
 
 ```bash
 python -m pc.buddy --address AA:BB:CC:DD:EE:FF demo

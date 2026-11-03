@@ -52,7 +52,7 @@ class InstallerTests(unittest.TestCase):
             install(self.source, self.config)
         result = install(self.source, self.config, replace=True)
         backup = Path(result["backup"])
-        self.assertEqual(backup.relative_to(self.config).parts[0], "openbuddy-backups")
+        self.assertEqual(backup.resolve().relative_to(self.config.resolve()).parts[0], "openbuddy-backups")
         self.assertEqual((backup / "index.js").read_bytes(), previous)
         self.assertEqual((target / "notes.txt").read_text(), "Keep this")
 

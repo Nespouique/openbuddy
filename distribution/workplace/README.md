@@ -238,8 +238,8 @@ Si la détection automatique échoue :
 .\.venv\Scripts\python.exe -m pc.opencode --address AA:BB:CC:DD:EE:FF
 ```
 
-L'adresse ci-dessus est celle de l'ESP32 actuellement préparé. Pour un autre
-appareil, utiliser celle renvoyée par `scan`.
+Utiliser l'adresse réelle renvoyée par `scan`. Dans la documentation publique,
+`AA:BB:CC:DD:EE:FF` est seulement une adresse d'exemple à remplacer.
 
 | Symptôme | Vérification |
 |---|---|

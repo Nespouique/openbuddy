@@ -52,7 +52,7 @@ def verify(archive_path, temporary_root):
                  "--find-links", str(kit / "wheelhouse"), "-r", str(kit / "requirements.txt")], kit, environment)
         command([python, "-c", "import bleak, pc.opencode; import winrt.windows.devices.bluetooth; "
                  "from pathlib import Path; from importlib.metadata import version; "
-                 "assert Path(bleak.__file__).is_relative_to(Path('.venv').resolve()); "
+                 "assert Path(bleak.__file__).resolve().is_relative_to(Path('.venv').resolve()); "
                  "assert version('bleak') == '3.0.2'; print('Fresh offline imports OK')"], kit, environment)
         command([python, "-m", "pc.install_plugin", "--config-dir", str(root / "isolated-config")], kit, environment)
         command([python, "-m", "pc.install_plugin", "--config-dir", str(root / "isolated-config")], kit, environment)

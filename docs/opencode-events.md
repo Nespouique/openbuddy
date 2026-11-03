@@ -20,6 +20,8 @@ permission, aucune modification des prompts, aucun nouvel outil agent**.
 Les boutons sont seulement signalés dans la console du pont. Cette version ne
 répond ni aux permissions ni aux formulaires, et n'arme jamais le clavier HID.
 Les autorisations restent à confirmer dans OpenCode.
+Les mêmes états d'attention produisent aussi une notification Windows native,
+en plus du son et de l'affichage physique.
 
 ## Démarrer et arrêter
 
@@ -43,11 +45,16 @@ heartbeats. Les notifications fonctionnent même si le BLE est indisponible.
 python -m pc.opencode --mute
 python -m pc.opencode sound-test
 python -m pc.opencode --no-ble
+python -m pc.opencode notification-test
+python -m pc.opencode --no-notifications
 ```
 
 `--mute` coupe les sons ; `sound-test` joue les quatre sons Windows ; `--no-ble`
 permet les notifications PC sans utiliser le périphérique. Les sons suivent les
 réglages audio Windows et leurs erreurs n'arrêtent pas le pont.
+`notification-test` envoie un toast de test ; `--no-notifications` désactive les
+bannières sans couper les sons. `--mute` conserve les bannières. Les toasts sont
+silencieux en eux-mêmes pour ne pas doubler le son du pont.
 Si Windows n'associe aucun son à `SystemQuestion`, un repli vers le son
 `SystemExclamation` est utilisé sans modifier le registre ni le volume.
 
@@ -61,6 +68,7 @@ python -m pc.opencode stop
 `status` indique le nombre d'instances du plugin reçues, la connexion BLE, l'état
 souhaité et `last_delivered`, le dernier état ayant reçu un ACK de l'ESP32.
 Le champ `sounds_enabled` indique si les notifications sonores sont activées.
+`notifications_enabled` et `notifications_last_error` décrivent le canal visuel.
 `stop` arrête uniquement le pont, pas OpenCode ni son service.
 
 Options utiles : `--address AA:BB:CC:DD:EE:FF`, `--port 19847`, `--no-ble`
@@ -155,6 +163,13 @@ Un second pont ne peut pas écraser la découverte d'un pont actif.
 Le jeton protège contre une page web ou un autre client dépourvu de ce fichier,
 pas contre un programme ayant déjà les droits du même compte utilisateur.
 
+Les toasts enregistrent uniquement l'identité `OpenBuddy.OpenCode` sous
+`HKCU\Software\Classes\AppUserModelId`. Les messages sont génériques, sans
+prompt ni nom de projet, et ne proposent aucun bouton d'approbation. Les réglages
+Windows et le mode Ne pas déranger restent respectés. Utiliser Win+N si une
+bannière a été masquée. L'API WinRT native partage la même version de runtime que
+Bleak ; aucune bibliothèque Windows-Toasts ancienne n'est nécessaire.
+
 ## Utilisation sur le PC de travail
 
 Un kit transférable avec dépendances hors ligne et installation guidée est généré
@@ -220,5 +235,6 @@ ne contient que le client OpenCode, pas ces bibliothèques de globbing.
   couverts par tests ; aucune permission dangereuse n'a été provoquée pour tester.
 - Notification sonore sur une question réelle confirmée par l'utilisateur ;
   pont relancé avec `sounds_enabled: true` et repli pour `SystemQuestion` silencieux.
-- **65 tests Python + 11 tests TypeScript**, vérification de types et import du
+- Bannière Windows et son confirmés ensemble par l'utilisateur sur une question réelle.
+- **71 tests Python + 11 tests TypeScript**, vérification de types et import du
   bundle autonome validés. Aucun changement du firmware 0.2.0 ou de la SD requis.
