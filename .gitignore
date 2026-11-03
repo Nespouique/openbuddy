@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+.cache/
+build/
+dist/
+node_modules/
+openbuddy-bonds.json
+openbuddy-bonds.json.tmp
+openbuddy-error.txt
+bridge.json
+.env
+.env.*
+/AGENTS.md
+/docs/hardware-notes.md
+/main.py
