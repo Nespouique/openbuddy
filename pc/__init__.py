@@ -1,0 +1,1 @@
+"""OpenBuddy desktop diagnostics."""

@@ -1,10 +1,60 @@
-name: OpenBuddy release preparation
+name: Test and publish workplace kit
+
 on:
+  push:
+    branches: [master]
   workflow_dispatch:
+
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: workplace-release
+  cancel-in-progress: false
+
 jobs:
-  prepare:
-    runs-on: ubuntu-latest
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 20
     steps:
-      - run: echo "OpenBuddy source publication is being prepared."
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '25'
+      - name: Install build and test dependencies
+        shell: pwsh
+        run: |
+          python -m pip install -r pc/requirements.txt -r pc/requirements-assets.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm --prefix integration/openbuddy ci --ignore-scripts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build standalone plugin
+        run: npm --prefix integration/openbuddy run build
+      - name: Python tests
+        run: python -m unittest discover -s tests -v
+      - name: Plugin tests
+        run: npm --prefix integration/openbuddy test
+      - name: Plugin types
+        run: npm --prefix integration/openbuddy run typecheck
+      - name: Build offline workplace ZIP
+        run: python tools/package_workplace.py --download-wheels
+      - name: Verify clean offline installation
+        run: python tools/verify_workplace.py
+      - name: Publish versioned release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = python -c "import json,zipfile; z=zipfile.ZipFile('dist/openbuddy-workplace.zip'); print(json.loads(z.read('openbuddy-workplace/MANIFEST.json'))['version'])"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tag = "v$version"
+          gh release view $tag --repo "$env:GITHUB_REPOSITORY" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists; leaving its assets untouched."
+            exit 0
+          }
+          gh release create $tag dist/openbuddy-workplace.zip dist/openbuddy-workplace.zip.sha256 --repo "$env:GITHUB_REPOSITORY" --target "$env:GITHUB_SHA" --title "OpenBuddy $version - Windows notifications and offline kit" --notes-file distribution/workplace/RELEASE.md
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

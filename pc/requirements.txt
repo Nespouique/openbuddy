@@ -1,0 +1,3 @@
+bleak==3.0.2
+winrt-Windows.Data.Xml.Dom==4!10.0.28000.2957; sys_platform == "win32"
+winrt-Windows.UI.Notifications==4!10.0.28000.2957; sys_platform == "win32"

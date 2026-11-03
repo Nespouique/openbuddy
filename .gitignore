@@ -1,13 +1,13 @@
 __pycache__/
 *.py[cod]
 .venv/
-.cache/
-build/
-dist/
-node_modules/
 openbuddy-bonds.json
 openbuddy-bonds.json.tmp
 openbuddy-error.txt
+.cache/
+build/
+node_modules/
+dist/
 bridge.json
 .env
 .env.*

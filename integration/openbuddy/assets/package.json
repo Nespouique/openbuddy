@@ -1,0 +1,6 @@
+{
+  "name": "@openbuddy/local-plugin",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./index.js" }
+}
