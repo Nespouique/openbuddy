@@ -1,0 +1,10 @@
+name: OpenBuddy release preparation
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "OpenBuddy source publication is being prepared."
