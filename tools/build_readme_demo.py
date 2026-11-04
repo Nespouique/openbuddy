@@ -48,7 +48,7 @@ SCENES = (
     Scene("idle", "Prêt à démarrer", "Le compagnon attend l'activité\nd'une session OpenCode.",
           "Aucune exécution active", "OpenCode ready", "usb", 1600),
     Scene("thinking", "L'agent réfléchit", "L'activité de raisonnement\nfait évoluer l'état du compagnon.",
-          "session.reasoning.started", "OpenCode active", "usb", 1800),
+          "session.reasoning.started", "OpenCode active", "usb", 2600),
     Scene("working", "L'agent travaille", "Un outil s'exécute :\nGoku passe à l'action.",
           "session.tool.called", "Running tools", "usb", 2000),
     Scene("permission", "À vous de valider", "Une autorisation est en attente.\nLa validation reste dans OpenCode.",
@@ -62,7 +62,7 @@ SCENES = (
     Scene("error", "Une erreur survient", "L'exécution a échoué.\nLes détails restent dans OpenCode.",
           "session.execution.failed", "Execution failed", "ble", 1800),
     Scene("retry", "Nouvelle tentative", "OpenCode attend avant de réessayer.\nLe compagnon indique RETRY.",
-          "session.retry.scheduled", "Retry scheduled", "ble", 1800),
+          "session.retry.scheduled", "Retry scheduled", "ble", 4200),
     Scene("success", "C'est reparti !", "La nouvelle exécution a réussi.\nLe même pet, en USB ou Bluetooth.",
           "session.execution.succeeded", "Response ready", "ble", 1800),
     Scene("offline", "Plus de source active", "Sans heartbeat, retour OFFLINE\naprès 15 s (transition illustrée).",
@@ -257,7 +257,7 @@ def generate(pet_dir, output, poster, scenes=SCENES):
         if not player.available:
             raise ValueError("Pet pack cannot be rendered: " + player.error)
         ui = ui_module.BuddyUI(display, led, player)
-        buddy = SimpleNamespace(passkey=None, confirm=None, hid_until=None, secure=True,
+        buddy = SimpleNamespace(passkey=None, confirm=None, hid_until=None, secure=True, info="37 / 200",
                                 pairing_open=lambda _now: False)
         frames, palette, samples = [], None, []
         now = 0
