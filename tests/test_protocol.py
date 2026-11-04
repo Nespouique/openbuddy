@@ -32,9 +32,13 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(validate_command({"v": 1, "id": 1, "cmd": "ping"}), "ping")
         for changes in ({"v": 2}, {"id": True}, {"id": -1}, {"cmd": "shell"},
                         {"cmd": "state", "state": "unknown"},
-                        {"cmd": "state", "state": "idle", "label": "x" * 25}):
+                        {"cmd": "state", "state": "idle", "label": "x" * 25},
+                        {"cmd": "state", "state": "idle", "info": "x" * 25},
+                        {"cmd": "state", "state": "idle", "info": 5}):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 validate_command(dict({"v": 1, "id": 1, "cmd": "ping"}, **changes))
+        self.assertEqual(validate_command({"v": 1, "id": 1, "cmd": "state", "state": "idle",
+                                           "info": "0 / 200"}), "state")
 
 
 if __name__ == "__main__":

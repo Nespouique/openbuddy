@@ -21,6 +21,7 @@ from bleak.exc import BleakError
 from c6lcd.buddy_protocol import SERVICE_UUID, STATES, TX_UUID
 from pc.buddy import Link, UsbLink, find_device, find_serial_port
 from pc.notifications import SOUND_ALIASES, SoundNotifier
+from pc.quota import QuotaMonitor
 from pc.toasts import DesktopNotifier
 
 LEASE_SECONDS = 12
@@ -118,7 +119,7 @@ class Registry:
 
 class Bridge:
     def __init__(self, port=19847, address=None, no_ble=False, path=None, mute=False, no_notifications=False,
-                 serial_port=None):
+                 serial_port=None, no_quota=False, quota_path=None):
         self.port = port
         self.address = address
         self.no_ble = no_ble
@@ -135,6 +136,9 @@ class Bridge:
         self.notifier = SoundNotifier(muted=mute)
         self.desktop_notifier = DesktopNotifier(disabled=no_notifications)
         self.sound_worker = None
+        self.quota = QuotaMonitor(quota_path)
+        self.no_quota = no_quota
+        self.quota_worker = None
 
     async def start(self):
         if self.path.exists():
@@ -162,6 +166,8 @@ class Bridge:
         elif not self.no_ble:
             self.worker = asyncio.create_task(self.ble_worker())
         self.sound_worker = asyncio.create_task(self.notification_worker())
+        if not self.no_quota:
+            self.quota_worker = asyncio.create_task(self.quota.run())
         print("OpenBuddy event bridge listening on 127.0.0.1:%d (read-only)" % self.port, flush=True)
 
     def health(self):
@@ -171,7 +177,8 @@ class Bridge:
                 "state": view, "last_delivered": self.last_delivered, "read_only": True,
                 "sounds_enabled": self.notifier.enabled,
                 "notifications_enabled": self.desktop_notifier.enabled,
-                "notifications_last_error": self.desktop_notifier.error}
+                "notifications_last_error": self.desktop_notifier.error,
+                "quota": self.quota.text or None, "quota_error": self.quota.error}
 
     async def handle(self, reader, writer):
         status, response = 400, {"error": "Invalid request"}
@@ -264,6 +271,8 @@ class Bridge:
         last, ping_at = None, 0
         while not link.disconnected.is_set():
             view = self.registry.current()
+            if view is not None and self.quota.text:
+                view = dict(view, info=self.quota.text)
             if view is None:
                 # No plugin lease: stop heartbeats so firmware becomes OFFLINE.
                 last = None
@@ -297,6 +306,9 @@ class Bridge:
             await asyncio.sleep(3)
 
     async def close(self):
+        if self.quota_worker is not None:
+            self.quota_worker.cancel()
+            await asyncio.gather(self.quota_worker, return_exceptions=True)
         if self.sound_worker is not None:
             self.sound_worker.cancel()
             await asyncio.gather(self.sound_worker, return_exceptions=True)
@@ -316,7 +328,8 @@ class Bridge:
 
 async def run(args):
     bridge = Bridge(args.port, args.address, args.no_ble, mute=args.mute,
-                    no_notifications=args.no_notifications, serial_port=args.serial)
+                    no_notifications=args.no_notifications, serial_port=args.serial,
+                    no_quota=args.no_quota, quota_path=Path(args.quota_config) if args.quota_config else None)
     try:
         await bridge.start()
         if args.duration is None:
@@ -350,6 +363,8 @@ def main():
     parser.add_argument("--no-ble", action="store_true", help="Test the event bridge without the device")
     parser.add_argument("--mute", action="store_true", help="Disable PC sound notifications")
     parser.add_argument("--no-notifications", action="store_true", help="Disable Windows toast notifications, independently of sound")
+    parser.add_argument("--no-quota", action="store_true", help="Do not run the provider quota command")
+    parser.add_argument("--quota-config", metavar="FILE", help="Quota configuration (default: %%APPDATA%%/openbuddy/quota.json)")
     parser.add_argument("--duration", type=float, help="Stop after this many seconds")
     args = parser.parse_args()
     if not (args.port == 0 or 1024 <= args.port <= 65535) or (args.duration is not None and args.duration <= 0):

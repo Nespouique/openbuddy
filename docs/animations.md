@@ -2,7 +2,7 @@
 
 ## Fonctionnement
 
-Le firmware **0.2.0** lit le pet **Super Saiyan Goku Combat**, partagé par
+Le firmware lit le pet **Super Saiyan Goku Combat**, partagé par
 **datpham** sur [Codex Pets](https://codex-pets.net/#/pets/super-saiyan-goku-combat).
 Le PC envoie uniquement un état BLE : les images restent sur la SD et continuent
 à s'animer même sans programme PC. `OFFLINE` utilise l'animation de repos.
@@ -14,24 +14,29 @@ Le PC envoie uniquement un état BLE : les images restent sur la SD et continuen
 - Images **RGB565 big-endian** prêtes à envoyer à l'écran, sans décodeur WebP/PNG sur l'ESP32.
 - Un seul buffer de **19 968 octets** ; aucune spritesheet entière en RAM.
 
-| État OpenBuddy | Animation Codex Pets |
-|---|---|
-| `offline`, `idle`, `thinking` | `idle` : méditation |
-| `working` | `running` |
-| `permission` | `review` |
-| `question`, `retry` | `waiting` |
-| `success` | `jumping` |
-| `error` | `failed` |
-| Appairage | `waving` |
+| État OpenBuddy | Animation | Contenu |
+|---|---|---|
+| `offline`, `idle` | `idle` | méditation |
+| `thinking` | `look` | méditation, tête qui regarde tout autour (lignes 9 et 10, 16 images) |
+| `working` | `running` | Kamehameha |
+| `permission` | `review` | Kienzan |
+| `question` | `waving` | salut de la main |
+| `success` | `jumping` | montée d'énergie |
+| `error` | `failed` | à genoux |
+| `retry` | `retry` | vol vers la gauche puis vers la droite (`running-left` + `running-right`, 16 images) |
+| Appairage | `waiting` | montée de puissance |
 
-Le pack contient **7 animations, 41 images, 818 688 octets** de pixels. Les
+Le pack contient **9 animations, 73 images, 1 457 664 octets** de pixels. Les
 cadences reprennent celles du site : généralement **260 ms/image**, 280 ms pour
 `jumping` et 350 ms pour `waving`. Le halo conserve sa couleur propre à chaque état.
+Un atlas v1 (9 lignes) n'a pas les lignes de regards : `thinking` y retombe sur `idle`.
+Après changement de mapping, reconvertir le pack puis le réinstaller avec `--replace`.
 
 Le robot intégré reste disponible si la carte SD, la sélection ou un fichier du
 pet manque. Une erreur de lecture désactive le lecteur d'animations sans arrêter
-le service BLE. Après insertion/réinsertion de la carte, redémarrer l'ESP32 :
-le montage et la sélection sont faits au démarrage, sans détection de retrait dédiée.
+le service BLE. Au démarrage, le montage est tenté 3 fois ; tant que le pet est
+indisponible, le firmware retente toutes les 3 s (puis toutes les 30 s après 20
+essais) et redessine l'écran dès que la carte répond, sans redémarrage.
 
 ## Bus SPI partagé
 
@@ -116,13 +121,8 @@ installation interrompue avant la publication du manifeste.
   active.json                    {"pet":"super-saiyan-goku-combat"}
   pets/super-saiyan-goku-combat/
     manifest.json
-    idle.rgb565
-    waving.rgb565
-    jumping.rgb565
-    failed.rgb565
-    waiting.rgb565
-    running.rgb565
-    review.rgb565
+    idle.rgb565  waving.rgb565  jumping.rgb565  failed.rgb565  waiting.rgb565
+    running.rgb565  review.rgb565  look.rgb565  retry.rgb565
 ```
 
 Chaque fichier est la concaténation de ses images, sans en-tête. Le manifeste v1

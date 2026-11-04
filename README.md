@@ -53,9 +53,9 @@ automatiquement : les réponses restent dans OpenCode.
 | Démarrage du pont | `--serial auto` ou `--serial COMx` | Sans option de transport |
 | Appairage | Aucun | BOOT long, vérification du code, puis **deuxième appui court** |
 | Écran, pet et halo | Identiques | Identiques |
-| Boutons et clavier | Pas de remontée des boutons ni de HID sur ce transport | Événements BOOT ; test F13 avec armement et appui physiques |
+| Boutons et clavier | Pas de remontée des boutons ni de HID sur ce transport | BOOT sert à l'appairage (appui long, puis confirmation du code) ; pas d'événement bouton ni de F13 |
 
-Le mode USB requiert le **firmware 0.3.0**. Le firmware conserve aussi le BLE :
+Le mode USB requiert le **firmware 0.3.0** ou plus (0.4.0 pour le quota). Le firmware conserve aussi le BLE :
 le choix du transport se fait au lancement du pont. En USB, un seul outil peut
 utiliser le port série à la fois. En Bluetooth, le buddy accepte un seul hôte à
 la fois. Les autorisations USB/Bluetooth du système restent applicables.
@@ -140,9 +140,11 @@ Dans un autre terminal, depuis la même racine :
 Le pet est lu sur la **microSD**, en RGB565, avec un seul buffer d'image en RAM.
 Sans pack installé, un robot intégré prend le relais. Les sprites et les packs
 du pet ne sont pas fournis dans le dépôt ou les kits : les visuels ci-dessus sont
-une démonstration de l'affichage, pas un pack d'assets.
+une démonstration de l'affichage, pas un pack d'assets. Le bouton BOOT (appui court)
+retourne l'affichage de 180° ; l'orientation choisie est mémorisée.
 
 - [Préparer et installer une animation](docs/animations.md)
+- [Afficher le quota du fournisseur (ex. GitHub Copilot)](docs/opencode-events.md#quota-du-fournisseur)
 - [Matériel, brochage et précautions](docs/hardware.md)
 - [Sources et attributions](THIRD_PARTY.md)
 

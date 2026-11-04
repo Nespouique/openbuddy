@@ -3,7 +3,7 @@
 import json
 
 VERSION = 1
-FIRMWARE_VERSION = "0.3.0"
+FIRMWARE_VERSION = "0.4.0"
 DEVICE_NAME = "OpenBuddy"
 SERVICE_UUID = "c8ad0001-4f90-4ab8-9976-22401b7861b0"
 RX_UUID = "c8ad0002-4f90-4ab8-9976-22401b7861b0"
@@ -37,6 +37,9 @@ def validate_command(message):
         label = message.get("label", "")
         if not isinstance(label, str) or len(label) > 24:
             raise ValueError("Label must contain at most 24 characters")
+        info = message.get("info", "")
+        if not isinstance(info, str) or len(info) > 24:
+            raise ValueError("Info must contain at most 24 characters")
     return command
 
 

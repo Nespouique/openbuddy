@@ -15,11 +15,28 @@ BACKGROUND = (8, 12, 20)
 CELL = (192, 208)
 OUTPUT_SIZE = (96, 104)
 # Codex Pets src/domain/config.ts, blob 12403682002a5f4415c65e1514317c7e978161bc.
-CLIPS = {"idle": (0, 6), "waving": (3, 4), "jumping": (4, 5),
-         "failed": (5, 8), "waiting": (6, 6), "running": (7, 6), "review": (8, 6)}
-STATE_CLIPS = {"offline": "idle", "idle": "idle", "thinking": "idle",
-               "working": "running", "permission": "review", "question": "waiting",
-               "success": "jumping", "error": "failed", "retry": "waiting", "pairing": "waving"}
+# A clip is a sequence of (atlas row, frame count) segments played back to back.
+# Rows 9-10 only exist in v2 atlases: sixteen head-turn frames of the idle pose.
+CLIPS = {"idle": ((0, 6),), "waving": ((3, 4),), "jumping": ((4, 5),),
+         "failed": ((5, 8),), "waiting": ((6, 6),), "running": ((7, 6),),
+         "review": ((8, 6),),
+         "look": ((9, 8), (10, 8)),
+         "retry": ((2, 8), (1, 8))}  # running-left, then running-right
+STATE_CLIPS = {"offline": "idle", "idle": "idle", "thinking": "look",
+               "working": "running", "permission": "review", "question": "waving",
+               "success": "jumping", "error": "failed", "retry": "retry", "pairing": "waiting"}
+
+
+def clip_frames(clip):
+    return sum(count for _, count in clip)
+
+
+def layout(sheet_height):
+    """v1 atlases have no look rows: thinking falls back to the idle clip."""
+    if sheet_height >= 11 * CELL[1]:
+        return CLIPS, STATE_CLIPS
+    clips = {name: clip for name, clip in CLIPS.items() if name != "look"}
+    return clips, dict(STATE_CLIPS, thinking="idle")
 
 
 def valid_id(value):
@@ -71,28 +88,33 @@ def convert(sheet_path, output, pet_id, source, frame_ms=None, force=False):
             raise ValueError("Expected a Codex Pets v1/v2 atlas (1536x1872 or 1536x2288)")
         sheet = image.convert("RGBA")
     output.mkdir(parents=True, exist_ok=True)
+    clips, states = layout(sheet.height)
     manifest = {
         "version": 1, "id": pet_id, "format": "RGB565-BE",
         "width": OUTPUT_SIZE[0], "height": OUTPUT_SIZE[1],
-        "background": list(BACKGROUND), "states": dict(STATE_CLIPS),
+        "background": list(BACKGROUND), "states": dict(states),
         "source": source, "animations": {},
     }
-    preview = Image.new("RGB", (7 * 112, 128), BACKGROUND)
+    preview = Image.new("RGB", (len(clips) * 112, 128), BACKGROUND)
     draw = ImageDraw.Draw(preview)
-    for index, (name, (row, count)) in enumerate(CLIPS.items()):
+    for index, (name, clip) in enumerate(clips.items()):
         path = output / (name + ".rgb565")
         digest = hashlib.sha256()
+        count = clip_frames(clip)
         with path.open("wb") as handle:
-            for frame in range(count):
-                box = (frame * CELL[0], row * CELL[1], (frame + 1) * CELL[0], (row + 1) * CELL[1])
-                cell = sheet.crop(box).resize(OUTPUT_SIZE, Image.Resampling.NEAREST)
-                opaque = Image.new("RGBA", OUTPUT_SIZE, BACKGROUND + (255,))
-                opaque.alpha_composite(cell)
-                data = rgb565(opaque)
-                handle.write(data)
-                digest.update(data)
-                if frame == 0:
-                    preview.paste(opaque.convert("RGB"), (index * 112 + 8, 0))
+            frame_number = 0
+            for row, segment in clip:
+                for frame in range(segment):
+                    box = (frame * CELL[0], row * CELL[1], (frame + 1) * CELL[0], (row + 1) * CELL[1])
+                    cell = sheet.crop(box).resize(OUTPUT_SIZE, Image.Resampling.NEAREST)
+                    opaque = Image.new("RGBA", OUTPUT_SIZE, BACKGROUND + (255,))
+                    opaque.alpha_composite(cell)
+                    data = rgb565(opaque)
+                    handle.write(data)
+                    digest.update(data)
+                    if frame_number == 0:
+                        preview.paste(opaque.convert("RGB"), (index * 112 + 8, 0))
+                    frame_number += 1
         draw.text((index * 112 + 8, 110), name, fill=(225, 233, 245))
         manifest["animations"][name] = {
             "file": path.name, "frames": count,
@@ -124,7 +146,8 @@ def convert_command(args):
     manifest = convert(sheet, output, pet_id, source, args.frame_ms, args.force)
     total = sum(item["bytes"] for item in manifest["animations"].values())
     print("Pack:", output)
-    print("7 animations, 41 frames, %d bytes; RGB565-BE 96x104" % total)
+    print("%d animations, %d frames, %d bytes; RGB565-BE 96x104" % (
+        len(manifest["animations"]), sum(item["frames"] for item in manifest["animations"].values()), total))
     print("Preview:", output / "preview.png")
 
 

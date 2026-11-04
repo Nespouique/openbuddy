@@ -107,6 +107,44 @@ L'installation ne modifie pas `opencode.json(c)` ni les autres plugins.
 Après une modification Python, arrêter puis relancer le pont : le processus déjà
 en cours ne recharge pas le code sonore automatiquement.
 
+## Quota du fournisseur
+
+L'écran affiche à la place de `PET / MICROSD` un texte `utilisé / limite`, par
+exemple `0 / 200`. Le pont exécute une commande que tu choisis, lit son JSON et
+envoie le texte avec chaque état (champ optionnel `info`, 24 caractères au plus).
+Sans fichier de configuration, l'ancien texte reste affiché ; sans lease valide
+(écran `OFFLINE`), le quota n'est pas montré.
+
+Fichier : `%APPDATA%\openbuddy\quota.json` (ou `$XDG_CONFIG_HOME/openbuddy/quota.json`),
+modifiable avec `--quota-config FICHIER`. `--no-quota` désactive la commande.
+
+```json
+{
+  "provider": "github-copilot",
+  "refresh_seconds": 300,
+  "providers": {
+    "github-copilot": {
+      "command": ["gh", "api", "copilot_internal/user", "--jq", ".quota_snapshots.premium_interactions"],
+      "used": "credits_used",
+      "limit": "entitlement"
+    }
+  }
+}
+```
+
+- `provider` choisit l'entrée de `providers` à suivre ; d'autres fournisseurs se
+  déclarent à côté, avec leur propre commande.
+- `command` est une liste, ou une chaîne découpée comme dans un shell POSIX. Elle
+  est lancée **sans shell**, avec un délai de 20 s et une sortie limitée à 64 Ko.
+- `used` et `limit` désignent des champs numériques de l'objet JSON renvoyé (chemin
+  pointé accepté, par exemple `a.b`). `label` optionnel est ajouté devant le texte.
+- `refresh_seconds` : 60 au minimum, 300 par défaut. Le fichier est relu à chaque
+  rafraîchissement. En cas d'échec, le dernier texte valide est conservé et l'erreur
+  est visible dans `python -m pc.opencode status` (`quota_error`).
+
+La commande `gh` utilise `GITHUB_TOKEN` en priorité : un jeton invalide dans
+l'environnement du pont fait échouer la requête (HTTP 401) même si `gh auth login` est valide.
+
 ## États et priorités
 
 | Événement ou situation | État du compagnon |

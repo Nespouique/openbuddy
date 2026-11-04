@@ -24,6 +24,7 @@ Lire d'abord `docs/hardware.md` (matériel, brochage, pièges), `docs/opencode-e
 - `pc/opencode.py` : pont événements → carte, démarrage `python -m pc.opencode`, diagnostic/arrêt avec `status`/`stop`.
 - Mode USB : `python -m pc.opencode --serial auto` (ou un port explicite), diagnostic `python -m pc.buddy --serial auto status`. Un seul outil sur le port série, DTR/RTS bas. Arrêter le pont avant `pc.deploy`, `pc.pet` ou `mpremote`.
 - `integration/openbuddy/dist/` : plugin v2 autonome généré, hors autochargement ; sources dans `integration/openbuddy/src/`, métadonnées/licence dans `assets/`, build `npm --prefix integration/openbuddy run build`. Ne pas éditer `index.js` à la main. Installation globale avec `python -m pc.install_plugin`.
+- `pc/quota.py` : texte `utilisé / limite` du fournisseur (ex. `0 / 200`) via une commande configurée dans `%APPDATA%\openbuddy\quota.json`, envoyé au firmware dans le champ optionnel `info` de la commande `state` et affiché à la place de `PET / MICROSD` ; `--no-quota` ou `--quota-config`. Les tests ne doivent jamais lancer la vraie commande (voir `setUpModule` de `tests/test_opencode_bridge.py`).
 - `pc/notifications.py` : sons système Windows, option `--mute`. `pc/toasts.py` : notifications Windows WinRT natives, texte générique, toast silencieux, option `--no-notifications`, aucun bouton de validation.
 - `pc/install_plugin.py` : installateur du plugin (global par défaut, projet en option), sauvegarde avant `--replace`, aucun changement des configs JSON.
 - `tools/package_workplace.py` : ZIP de transfert par liste blanche, wheels hors ligne ; README du kit dans `distribution/workplace/README.md`, variante USB avec `--variant usb` et `README-usb.md`.
@@ -34,12 +35,13 @@ Lire d'abord `docs/hardware.md` (matériel, brochage, pièges), `docs/opencode-e
 ## État
 
 - Cible : C6-LCD-1.47, MicroPython 1.29, écran **landscape 320×172** (USB-C à gauche par défaut), BLE HID + GATT et USB série, appairage authentifié avec clés persistantes.
-- Microprogramme 0.3.0 et kits 1.2.0 publiés. Pet lu depuis une microSD FAT32 partagée avec l'écran (un buffer de 19 968 octets).
+- Microprogramme **0.4.0** (kits publiés en 1.2.0 : firmware 0.3.0). Pet lu depuis une microSD FAT32 partagée avec l'écran (un buffer de 19 968 octets).
 - Plugin `openbuddy.events` autonome (SDK 2.2.5 embarqué, sans Node/npm), réservé au service OpenCode local géré. Éviter de charger en même temps les copies globale et projet (`Duplicate plugin ID`).
 - Pont Python 3.11+, sons et toasts Windows indépendants du BLE. Utiliser le runtime WinRT 4.1.0 ; ne pas installer Windows-Toasts 1.3.1 (impose un runtime 3.x incompatible).
 - BOOT : appui court = rotation 180° (`landscape`/`landscape_inv`, mémorisée dans `openbuddy-orientation.txt`), appui long 3 s = fenêtre d'appairage BLE, appui court pendant une comparaison de code = confirmation. Plus d'événement `button` ni de F13 sur appui court.
+- Pet : 9 animations (73 images). `thinking` = `look` (lignes de regards 9-10 de l'atlas v2), `retry` = `running-left` puis `running-right`, `question` = `waving`, appairage = `waiting`. Le pack se régénère avec `pc.pet`, puis `pc.pet install --replace`.
 - Montage SD : 3 essais au démarrage, puis rechargement du pet toutes les 3 s (30 s après 20 essais) si la carte n'était pas prête.
-- Non validé sur matériel : rotation BOOT, rechargement du pet après démarrage à froid, touche HID F13 réelle.
+- Non validé sur matériel : nouveau pack d'animations, affichage du quota, rotation BOOT, rechargement du pet après démarrage à froid, touche HID F13 réelle.
 - Sous Windows, normaliser avec `.resolve()` avant de comparer des chemins (formes courtes/longues).
 
 ## Règles matérielles critiques (C6-LCD-1.47)

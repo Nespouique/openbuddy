@@ -23,6 +23,7 @@ FILES = {
     "pc/opencode.py": "pc/opencode.py",
     "pc/notifications.py": "pc/notifications.py",
     "pc/toasts.py": "pc/toasts.py",
+    "pc/quota.py": "pc/quota.py",
     "pc/install_plugin.py": "pc/install_plugin.py",
     "c6lcd/buddy_protocol.py": "c6lcd/buddy_protocol.py",
     "plugin/openbuddy/index.js": "integration/openbuddy/dist/index.js",

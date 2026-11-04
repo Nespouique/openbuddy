@@ -60,6 +60,12 @@ class UsbFirmwareTests(unittest.TestCase):
         self.assertEqual((self.buddy.state, self.buddy.label), ("working", "Running tool"))
         self.assertTrue(self.buddy.online(self.now))
 
+    def test_info_is_stored_and_replaced_by_the_next_state(self):
+        self.send(frame("state", state="idle", info="0 / 200"))
+        self.assertEqual(self.buddy.info, "0 / 200")
+        self.send(frame("state", 2, state="idle"))
+        self.assertEqual(self.buddy.info, "")
+
     def test_offline_until_a_command_and_after_the_lease(self):
         self.assertFalse(self.buddy.online(self.now))
         self.send(frame("ping"))

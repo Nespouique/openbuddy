@@ -109,6 +109,7 @@ class BuddyBLE:
         self.last_seen = None
         self.state = "idle"
         self.label = ""
+        self.info = ""
         self.protocol_mode = 1
         self.suspended = False
         self.decoder = Decoder()
@@ -353,6 +354,7 @@ class BuddyBLE:
             if command == "state":
                 self.state = message["state"]
                 self.label = message.get("label", "")
+                self.info = message.get("info", "")
             elif command == "hid_arm":
                 if self.suspended:
                     raise ValueError("Keyboard is suspended")

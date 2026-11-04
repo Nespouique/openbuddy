@@ -8,6 +8,16 @@ from unittest.mock import patch
 from pc.opencode import Bridge, LEASE_SECONDS, Registry, control, load_discovery
 
 
+def setUpModule():
+    # Never run the developer's real quota command from unit tests.
+    global isolated_quota
+    isolated_quota = tempfile.TemporaryDirectory()
+    patcher = patch("pc.quota.config_path", lambda: Path(isolated_quota.name) / "quota.json")
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
+    unittest.addModuleCleanup(isolated_quota.cleanup)
+
+
 def message(source="project-a", sequence=1, state="thinking", **fields):
     return dict(v=1, source=source, sequence=sequence, state=state, label="OpenCode active",
                 pending_permissions=0, pending_forms=0, active_sessions=1, **fields)
@@ -145,6 +155,31 @@ class HTTPTests(unittest.IsolatedAsyncioTestCase):
                 await bridge.close()
         self.assertFalse(bridge.health()["usb_connected"])
         self.assertTrue(link.closed)
+
+    async def test_quota_text_is_delivered_with_the_state_and_updates_it(self):
+        class FakeLink:
+            def __init__(self):
+                self.requests = []
+                self.disconnected = asyncio.Event()
+
+            async def request(self, command, **fields):
+                self.requests.append((command, fields))
+
+        bridge = Bridge(port=0, path=Path(self.directory.name) / "quota.json", mute=True,
+                        no_notifications=True, no_ble=True)
+        link = FakeLink()
+        bridge.registry.update(message(state="working"))
+        task = asyncio.create_task(bridge.deliver_states(link))
+        try:
+            await asyncio.sleep(0.4)
+            self.assertNotIn("info", link.requests[0][1])
+            bridge.quota.text = "0 / 200"
+            await asyncio.sleep(0.4)
+            self.assertEqual(link.requests[-1][1]["info"], "0 / 200")
+            self.assertEqual(bridge.health()["quota"], "0 / 200")
+        finally:
+            link.disconnected.set()
+            await task
 
     async def test_control_ignores_environment_proxies_for_loopback(self):
         with patch.dict("os.environ", {"http_proxy": "http://127.0.0.1:1", "HTTP_PROXY": "http://127.0.0.1:1", "no_proxy": "", "NO_PROXY": ""}):

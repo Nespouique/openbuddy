@@ -78,7 +78,8 @@ class BuddyUI:
             footer = "USB BRIDGE ACTIVE" if usb else "BOOT: ROTATE | HOLD 3s: PAIR"
         link = "USB LINK" if usb else "BLE SECURE" if buddy.secure else "BLE WAIT"
         asset_ready = self.player is not None and self.player.available
-        snapshot = (state, detail, footer, link, asset_ready)
+        quota = printable(getattr(buddy, "info", ""))[:24] if buddy.online(now) else ""
+        snapshot = (state, detail, footer, link, asset_ready, quota)
         changed = snapshot != self.previous
         if changed:
             self.previous = snapshot
@@ -91,8 +92,8 @@ class BuddyUI:
             lcd.text(LABELS[state], 124, 55, accent, BACKGROUND, 2)
             scale = 2 if buddy.passkey is not None else 1
             lcd.text(detail[:24], 124, 87, WHITE, BACKGROUND, scale)
-            lcd.text("PET / MICROSD" if asset_ready
-                     else "USB SERIAL / v1" if usb else "HID + GATT / v1",
+            lcd.text(quota or ("PET / MICROSD" if asset_ready
+                               else "USB SERIAL / v1" if usb else "HID + GATT / v1"),
                      124, 113, MUTED, BACKGROUND)
             lcd.fill_rect(12, 141, 296, 1, accent)
             lcd.text(footer, 12, 153, MUTED, BACKGROUND)

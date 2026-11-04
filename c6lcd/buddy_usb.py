@@ -46,6 +46,7 @@ class BuddyUSB:
         self.decoder = Decoder()
         self.state = "idle"
         self.label = ""
+        self.info = ""
         self.last_seen = None
         # Attributes read by BuddyUI; pairing and HID do not exist over USB.
         self.passkey = None
@@ -78,6 +79,7 @@ class BuddyUSB:
             if command == "state":
                 self.state = message["state"]
                 self.label = message.get("label", "")
+                self.info = message.get("info", "")
             self.last_seen = now
             response = {"event": "ack", "id": request_id, "state": self.state}
             if command == "status":
