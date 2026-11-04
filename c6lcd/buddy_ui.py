@@ -36,6 +36,10 @@ class BuddyUI:
         self.led_value = None
         self.lcd.fill_rect(0, 0, lcd.w, lcd.h, BACKGROUND)
 
+    def invalidate(self):
+        """Force a full redraw, e.g. after the panel orientation changed."""
+        self.previous = None
+
     def _face(self, accent, frame, state):
         lcd = self.lcd
         lcd.fill_rect(16, 43, 82, 88, BACKGROUND)
@@ -71,7 +75,7 @@ class BuddyUI:
         else:
             detail = ((printable(buddy.label)[:24] or "Awaiting events")
                       if buddy.online(now) else "No Python bridge")
-            footer = "USB BRIDGE ACTIVE" if usb else "BOOT: EVENT | HOLD 3s: PAIR"
+            footer = "USB BRIDGE ACTIVE" if usb else "BOOT: ROTATE | HOLD 3s: PAIR"
         link = "USB LINK" if usb else "BLE SECURE" if buddy.secure else "BLE WAIT"
         asset_ready = self.player is not None and self.player.available
         snapshot = (state, detail, footer, link, asset_ready)
