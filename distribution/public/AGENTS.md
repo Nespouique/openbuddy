@@ -20,8 +20,10 @@ changing firmware or integration code.
   global and project copies.
 - Keep hardware-specific tests mocked in CI. Do not flash a device or play desktop
   notifications from unit tests.
-- Never include pet artwork, runtime profiles, caches, virtual environments or
-  `node_modules` in source publication or transfer kits.
+- Never include raw pet packs, runtime profiles, caches, virtual environments or
+  `node_modules` in source publication or transfer kits. Only the explicitly
+  allowlisted README GIF/still demonstration may depict the pet; preserve its
+  attribution and never bundle the original sprites or converted animation files.
 
 Checks:
 

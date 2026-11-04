@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
+# Binary README demonstrations are published separately, never as text or pet packs.
+MEDIA_FILES = ("docs/media/openbuddy-demo.gif", "docs/media/openbuddy-demo.png")
 
 
 def files():
@@ -15,6 +17,7 @@ def files():
         "AGENTS.md": ROOT / "distribution/public/AGENTS.md",
         "README.md": ROOT / "README.md",
         "THIRD_PARTY.md": ROOT / "THIRD_PARTY.md",
+        "tools/assets/font_petme128_8x8.h": ROOT / "tools/assets/font_petme128_8x8.h",
         ".github/workflows/release.yml": ROOT / ".github/workflows/release.yml",
         "plugin/openbuddy/index.js": ROOT / "integration/openbuddy/dist/index.js",
         "plugin/openbuddy/package.json": ROOT / "integration/openbuddy/dist/package.json",

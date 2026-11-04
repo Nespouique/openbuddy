@@ -1,93 +1,167 @@
 # OpenBuddy
 
-Compagnon physique pour OpenCode sur **Waveshare ESP32-C6-LCD-1.47** : écran
-paysage, halo RVB et bouton BOOT, avec transport **Bluetooth LE ou USB série**.
+**L'activité d'OpenCode, visible en un coup d'œil.** Un compagnon physique sur
+**Waveshare ESP32-C6-LCD-1.47** : écran paysage 320×172, pet animé et halo RVB,
+synchronisés en **Local USB** ou en **Bluetooth**.
 
-## Télécharger le kit Windows
+![Démonstration OpenBuddy : les événements OpenCode synchronisent les écrans et le pet Goku en Local USB ou Bluetooth.](docs/media/openbuddy-demo.gif)
 
-**[Releases — kit prêt à installer](https://github.com/Nespouique/openbuddy/releases/latest)**
+*Scénario simulé, rendu par le vrai code d'affichage du firmware et les animations
+RGB565 du pet installé. Ce n'est pas une capture d'une session OpenCode réelle.
+[Aperçu fixe](docs/media/openbuddy-demo.png) · Pet « Super Saiyan Goku Combat » par
+[datpham / Codex Pets](https://codex-pets.net/#/pets/super-saiyan-goku-combat).*
 
-Choisir dans les assets de la Release, extraire et suivre le `README.md` inclus :
+## Comment la synchronisation fonctionne
 
-- **`openbuddy-workplace-usb.zip`** : pilotage par câble USB, sans appairage
-  Bluetooth ; inclut le firmware **0.3.0**, son outil de déploiement et des lanceurs Windows.
-- **`openbuddy-workplace.zip`** : pilotage Bluetooth LE, avec clavier HID et boutons.
-
-Les deux kits contiennent le plugin autonome, le pont Python et les dépendances
-hors ligne pour CPython 3.11–3.14/Windows x64, sans Node/npm ni droits admin.
-Le mode USB nécessite une mise à jour si la carte utilise encore le firmware 0.2.0.
-Chaque transport reste soumis aux règles du poste de travail.
-
-Le ZIP « Code → Download ZIP » de GitHub contient les sources et un plugin déjà
-compilé, mais **pas** le wheelhouse hors ligne. Utiliser un canal de téléchargement
-autorisé par la politique du poste de travail.
-
-## Prototype actuel
-
-- Firmware **MicroPython**, profil clavier BLE HID + service GATT OpenBuddy.
-- États de diagnostic, **Goku animé depuis la microSD** et halo synchronisé.
-- Bus SPI écran/SD partagé, lecture seule et robot intégré de secours.
-- Appairage physique et authentifié, clés persistantes en flash.
-- Client Python **Bleak** : découverte, états, boutons, reconnexion, test F13 armé.
-- Transport **USB série** avec reconnexion : mêmes états, animations et halo,
-  sans boutons remontés ni clavier HID sur ce transport.
-- Plugin **OpenCode v2** : états réels, permissions/questions, tâches parallèles.
-- Pont d'événements en lecture seule : aucune validation automatique par bouton.
-- Notifications sonores Windows sur permission, question, succès et erreur (`--mute` disponible).
-- Notifications Windows natives (bannière et centre de notifications), indépendantes du son.
-
-```bash
-python -m pip install --user -r pc/requirements.txt
-python -m pc.buddy scan
-python -m pc.buddy demo
+```text
+OpenCode v2 → plugin d'événements → pont Python local → Local USB ou Bluetooth
+                                                           ↓
+                                                écran + animation + halo
 ```
 
-Pour utiliser les événements réels plutôt que la démonstration :
+Le plugin écoute les **événements OpenCode v2**, suit les sessions et les demandes
+en attente, puis transmet un état au pont Python. Le pont envoie cet état au buddy ;
+le firmware choisit l'écran, la couleur du halo et l'animation lue sur microSD.
+Les images ne sont pas envoyées en continu par le transport.
 
-```bash
-python -m pc.opencode
+| Dans OpenCode | Sur OpenBuddy |
+|---|---|
+| Prêt, aucune exécution active | `READY` — pet au repos |
+| L'agent réfléchit | `THINKING` — halo bleu |
+| Un outil s'exécute ou une réponse s'écrit | `WORKING` — pet en action, halo turquoise |
+| Une autorisation attend une validation | `PERMISSION` — halo orange |
+| Une question attend une réponse | `QUESTION` — halo jaune |
+| L'exécution a réussi | `DONE` — animation de succès, halo vert |
+| L'exécution a échoué | `ERROR` — animation d'échec, halo rouge |
+| Une nouvelle tentative est programmée | `RETRY` — animation d'attente, halo ambre |
+| Plus de heartbeat du pont pendant 15 s | `OFFLINE` — pet au repos, halo atténué |
+
+Les permissions et questions sont prioritaires, y compris avec plusieurs sessions.
+Sur Windows, **sons et notifications visuelles** complètent le compagnon pour les
+permissions, questions, succès et erreurs. `--mute` coupe seulement les sons ;
+`--no-notifications` coupe seulement les notifications Windows.
+
+**Seuls des états et libellés génériques sont transmis** : pas de prompts, code,
+texte de question ou résultats d'outils. Les boutons ne valident aucune autorisation
+automatiquement : les réponses restent dans OpenCode.
+
+## Deux modes, le même compagnon
+
+| | Local USB | Bluetooth |
+|---|---|---|
+| Connexion | Câble USB-C **de données**, port série | Bluetooth LE : service GATT OpenBuddy + clavier HID |
+| Démarrage du pont | `--serial auto` ou `--serial COMx` | Sans option de transport |
+| Appairage | Aucun | BOOT long, vérification du code, puis **deuxième appui court** |
+| Écran, pet et halo | Identiques | Identiques |
+| Boutons et clavier | Pas de remontée des boutons ni de HID sur ce transport | Événements BOOT ; test F13 avec armement et appui physiques |
+
+Le mode USB requiert le **firmware 0.3.0**. Le firmware conserve aussi le BLE :
+le choix du transport se fait au lancement du pont. En USB, un seul outil peut
+utiliser le port série à la fois. En Bluetooth, le buddy accepte un seul hôte à
+la fois. Les autorisations USB/Bluetooth du système restent applicables.
+
+## Installer depuis le dépôt
+
+Prérequis : **Windows 10/11, CPython 3.11–3.14 x64, OpenCode v2** en service
+local géré. Le plugin et le pont tournent sur la même machine qu'OpenCode.
+Le plugin compilé est fourni : **Node/npm n'est pas nécessaire pour l'utiliser**.
+
+Depuis PowerShell :
+
+```powershell
+git clone https://github.com/Nespouique/openbuddy.git
+Set-Location openbuddy
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r pc\requirements.txt
+.\.venv\Scripts\python.exe -m pc.install_plugin
 ```
 
-Pour utiliser un câble USB de données plutôt que le Bluetooth (firmware 0.3.0) :
+Dans OpenCode, utiliser `/reload` si nécessaire. Pour mettre à jour une installation
+du plugin existante, ajouter `--replace` : les fichiers remplacés sont sauvegardés,
+sans modifier les configurations OpenCode ni les autres plugins.
+Pour une copie du dépôt déjà présente, utiliser `git pull` au lieu de la cloner.
 
-```bash
-python -m pc.buddy --serial auto status
-python -m pc.opencode --serial auto
+### Local USB
+
+Brancher le câble de données, puis lancer depuis la racine du dépôt :
+
+```powershell
+.\.venv\Scripts\python.exe -m pc.buddy --serial auto scan
+.\.venv\Scripts\python.exe -m pc.buddy --serial auto status
+.\.venv\Scripts\python.exe -m pc.opencode --serial auto
 ```
 
-`auto` choisit l'unique port Espressif ; utiliser `--serial COMx` s'il y en a
-plusieurs. Arrêter le pont avant d'utiliser un autre outil sur le même port.
+`auto` sélectionne l'unique port Espressif ; utiliser `--serial COMx` s'il y en a
+plusieurs. **Garder le pont actif**. Les lanceurs `tools\openbuddy-usb.cmd` et
+`tools\openbuddy-usb-stop.cmd` permettent aussi de le démarrer en arrière-plan et
+de l'arrêter, sans démarrage automatique Windows.
 
-Installer le plugin avec `python -m pc.install_plugin`, puis utiliser `/reload`
-dans OpenCode si nécessaire. Une copie compilée est dans `plugin/openbuddy/` ;
-le build développeur génère `integration/openbuddy/dist/`, hors autochargement. Voir
-[événements OpenCode](docs/opencode-events.md) pour le démarrage, le diagnostic,
-la copie sur un autre PC et les limites. Node/npm ne sont pas nécessaires pour
-exécuter le plugin autonome dans OpenCode.
+Si le firmware doit être mis à jour, arrêter d'abord le pont et les autres outils
+série, puis :
 
-## Transfert sur le PC de travail
-
-Les kits **`dist/openbuddy-workplace.zip`** et **`dist/openbuddy-workplace-usb.zip`** contiennent le plugin, le pont Python,
-les dépendances hors ligne pour CPython 3.11–3.14/Windows x64, un installateur
-sans droits admin et toutes les commandes dans son `README.md`.
-Guide source : [`distribution/workplace/README.md`](distribution/workplace/README.md).
-Guide USB : [`distribution/workplace/README-usb.md`](distribution/workplace/README-usb.md).
-
-Reconstruction du kit :
-
-```bash
-python tools/package_workplace.py --download-wheels --replace
-python tools/package_workplace.py --variant usb --download-wheels --replace
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r pc\requirements-assets.txt
+.\.venv\Scripts\python.exe -m pc.deploy --port COMx
 ```
 
-En mode Bluetooth uniquement, l'appairage Windows doit être effectué au préalable avec un appui long de 3 s
-sur BOOT et confirmation du code. Voir le [guide du prototype BLE](docs/ble-prototype.md)
-pour la procédure complète, le déploiement et les limites de validation.
+Remplacer `COMx` par le port détecté. Le déploiement ne formate pas la carte et
+conserve la SD et les clés Bluetooth. [Guide USB détaillé](distribution/workplace/README-usb.md).
 
-Pour convertir et installer les images : voir [animations sur microSD](docs/animations.md).
-Le firmware se déploie avec `python -m pc.deploy --port COM9`, sans effacer les
-clés d'appairage ni la SD. Les assets communautaires ne sont pas redistribués
-dans le projet ; leurs sources et attributions sont documentées dans `THIRD_PARTY.md`.
+### Bluetooth
+
+Alimenter le buddy, ouvrir l'ajout d'appareil Bluetooth dans Windows, puis maintenir
+BOOT environ 3 s. Comparer les codes, confirmer dans Windows et faire un
+**deuxième appui court sur BOOT**. Déconnecter tout ancien hôte à portée.
+
+```powershell
+.\.venv\Scripts\python.exe -m pc.buddy scan
+.\.venv\Scripts\python.exe -m pc.buddy status
+.\.venv\Scripts\python.exe -m pc.opencode
+```
+
+Être reconnu comme clavier ne garantit pas l'accès au service GATT personnalisé.
+[Guide Bluetooth détaillé](docs/ble-prototype.md).
+
+### Diagnostic et arrêt
+
+Dans un autre terminal, depuis la même racine :
+
+```powershell
+.\.venv\Scripts\python.exe -m pc.opencode status
+.\.venv\Scripts\python.exe -m pc.opencode stop
+```
+
+`status` indique notamment `sources`, `usb_connected` / `ble_connected` et
+`last_delivered`. `Ctrl+C` arrête aussi le pont lancé dans un terminal.
+[Architecture et dépannage](docs/opencode-events.md).
+
+## Pet et matériel
+
+Le pet est lu sur la **microSD**, en RGB565, avec un seul buffer d'image en RAM.
+Sans pack installé, un robot intégré prend le relais. Les sprites et les packs
+du pet ne sont pas fournis dans le dépôt ou les kits : les visuels ci-dessus sont
+une démonstration de l'affichage, pas un pack d'assets.
+
+- [Préparer et installer une animation](docs/animations.md)
+- [Matériel, brochage et précautions](docs/hardware.md)
+- [Sources et attributions](THIRD_PARTY.md)
+
+## Kits prêts à installer — optionnels
+
+Pour installer sans cloner le dépôt, les [Releases](https://github.com/Nespouique/openbuddy/releases/latest)
+proposent un **[kit Local USB](https://github.com/Nespouique/openbuddy/releases/latest/download/openbuddy-workplace-usb.zip)**
+et un **[kit Bluetooth](https://github.com/Nespouique/openbuddy/releases/latest/download/openbuddy-workplace.zip)**,
+avec les dépendances Windows x64 hors ligne et leur README. Les sources GitHub
+ne contiennent pas le wheelhouse hors ligne.
+
+Reconstruction locale des kits :
+
+```powershell
+python tools/package_workplace.py --variant usb --download-wheels
+python tools/package_workplace.py --variant bluetooth --download-wheels
+```
+
+Un kit existant n'est remplacé qu'avec `--replace`.
 
 ## Fichiers
 
@@ -112,7 +186,29 @@ dans le projet ; leurs sources et attributions sont documentées dans `THIRD_PAR
 | `pc/pet.py` | Conversion et installation des packs |
 | `pc/deploy.py` | Déploiement des seuls fichiers firmware |
 | `tools/openbuddy-usb.cmd`, `openbuddy-usb-stop.cmd` | Lancement en arrière-plan et arrêt du pont USB |
+| `tools/build_readme_demo.py` | Génération hors ligne du GIF à partir du firmware et d'un pack local |
 | `docs/hardware.md` | Matériel, brochage et précautions |
 
-Tests : installer les deux fichiers `pc/requirements*.txt`, puis
-`python -m unittest discover -s tests -v`.
+## Développement
+
+Installer aussi `pc/requirements-assets.txt` pour Pillow et les outils de déploiement.
+Les tests n'accèdent pas au matériel et n'exigent pas les images Goku :
+
+```powershell
+python -m unittest discover -s tests -v
+npm --prefix integration/openbuddy test
+npm --prefix integration/openbuddy run typecheck
+```
+
+Node/npm est utilisé uniquement pour développer/reconstruire le plugin :
+`npm --prefix integration/openbuddy ci`, puis `npm --prefix integration/openbuddy run build`.
+Ne pas modifier le bundle compilé à la main.
+
+Pour régénérer le visuel du README depuis un pack déjà converti localement :
+
+```powershell
+python tools/build_readme_demo.py --pet-dir build/pets/super-saiyan-goku-combat
+```
+
+Le générateur utilise `BuddyUI`, `PetPlayer` et la police du firmware ; il ne se
+connecte ni à OpenCode ni au buddy et ne télécharge aucun asset.

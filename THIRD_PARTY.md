@@ -48,8 +48,21 @@ Pet images are community assets, not covered by the driver's MIT license.
 The selected Super Saiyan Goku Combat pet is shared by **datpham** at
 <https://codex-pets.net/#/pets/super-saiyan-goku-combat>.
 
-No redistribution license for the character artwork has been verified. Downloads
-and converted binaries are kept in ignored local directories and copied only to
-the user's device. Do not assume that the site's code license grants rights to
-its community images or to the original character. Each generated manifest records
-the source URL and attribution.
+No redistribution license for the character artwork has been verified. Original
+downloads and converted pet packs remain in ignored local directories and are not
+shipped in the source distribution or runtime kits. The README GIF and still image
+depict this installed pet in an illustrative firmware demonstration, credited to
+datpham / Codex Pets; they are not a reusable sprite pack or a grant of rights.
+Do not assume that the site's code license grants rights to its community images
+or to the original character. The artwork and original character remain subject
+to their respective rights holders. Each generated pet manifest records the
+source URL and attribution.
+
+## MicroPython display font used by the README generator
+
+`tools/assets/font_petme128_8x8.h` is copied without modification from MicroPython,
+Git blob `0ee897d96890869e76256a6c6a104b606fe03f87`:
+<https://github.com/micropython/micropython/blob/master/extmod/font_petme128_8x8.h>.
+Copyright (c) 2013, 2014 Damien P. George, MIT License. The complete copyright and
+license notice is retained in that file. This lets the desktop demonstration use
+the same 8x8 glyphs as the firmware instead of substituting a desktop font.

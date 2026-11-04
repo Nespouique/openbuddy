@@ -3,7 +3,7 @@
 from pathlib import Path
 import unittest
 
-from tools.prepare_publication import files, prepare
+from tools.prepare_publication import MEDIA_FILES, ROOT, files, prepare
 
 
 class PublicationTests(unittest.TestCase):
@@ -19,6 +19,16 @@ class PublicationTests(unittest.TestCase):
         self.assertNotIn("docs/hardware-notes.md", selected)
         self.assertNotIn("openbuddy-bonds.json", selected)
         self.assertEqual(selected["AGENTS.md"], selected["distribution/public/AGENTS.md"])
+
+    def test_readme_media_is_explicit_and_never_treated_as_source_text(self):
+        selected = files()
+        self.assertEqual(MEDIA_FILES, ("docs/media/openbuddy-demo.gif", "docs/media/openbuddy-demo.png"))
+        for name in MEDIA_FILES:
+            self.assertTrue((ROOT / name).is_file())
+            self.assertNotIn(name, selected)
+            self.assertLess((ROOT / name).stat().st_size, 2 * 1024 * 1024)
+        font = selected["tools/assets/font_petme128_8x8.h"].read_text(encoding="utf-8")
+        self.assertIn("The MIT License (MIT)", font)
 
     def test_every_usb_kit_source_is_available_in_the_public_payload(self):
         from tools.package_workplace import ROOT, files_for
