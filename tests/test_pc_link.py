@@ -47,8 +47,8 @@ class LinkTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_windows_explicit_address_does_not_require_advertising(self):
         with patch("pc.buddy.sys.platform", "win32"):
-            device = await find_device("AA:BB:CC:DD:EE:FF", 1)
-        self.assertEqual(device.address, "AA:BB:CC:DD:EE:FF")
+            device = await find_device("AC:EB:E6:3E:B2:26", 1)
+        self.assertEqual(device.address, "AC:EB:E6:3E:B2:26")
 
 
 if __name__ == "__main__":

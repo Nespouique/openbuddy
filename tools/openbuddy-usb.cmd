@@ -18,7 +18,7 @@ if not errorlevel 1 (
 
 if not exist "%LOGDIR%" mkdir "%LOGDIR%"
 powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath $env:PYTHON -ArgumentList '-m','pc.opencode','--serial','auto' -WindowStyle Hidden -RedirectStandardOutput $env:LOG -RedirectStandardError ($env:LOG + '.err')"
-timeout /t 8 /nobreak >nul
+ping -n 9 127.0.0.1 >nul
 "%PYTHON%" -m pc.opencode status >nul 2>nul
 if not errorlevel 1 exit /b 0
 

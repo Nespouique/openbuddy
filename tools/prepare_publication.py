@@ -41,9 +41,9 @@ def prepare():
     for name, path in sorted(files().items()):
         content = path.read_text(encoding="utf-8")
         # Device identifiers in examples/tests are placeholders in the public copy.
-        content = content.replace("AA:BB:CC:DD:EE:FF", "AA:BB:CC:DD:EE:FF")
-        content = content.replace("aa:bb:cc:dd:ee:ff", "aa:bb:cc:dd:ee:ff")
-        content = content.replace("AABBCCDDEEFF", "AABBCCDDEEFF")
+        content = content.replace("AC:EB:E6:3E:B2:26", "AA:BB:CC:DD:EE:FF")
+        content = content.replace("ac:eb:e6:3e:b2:26", "aa:bb:cc:dd:ee:ff")
+        content = content.replace("ACEBE63EB226", "AABBCCDDEEFF")
         if re.search(r"C:[\\/]+Users[\\/]+[A-Za-z0-9._-]+[\\/]", content, re.IGNORECASE):
             raise ValueError("Personal filesystem path in public file: " + name)
         if re.search(r"(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|[-]{5}BEGIN [A-Z ]*PRIVATE KEY[-]{5})", content):

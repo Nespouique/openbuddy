@@ -75,13 +75,13 @@ par `scan`. Elle peut être différente de l'adresse USB/Wi-Fi de la carte. Les
 adresses d'exemple de la documentation publique doivent être remplacées.
 
 ```bash
-python -m pc.buddy --address AA:BB:CC:DD:EE:FF demo
+python -m pc.buddy --address AC:EB:E6:3E:B2:26 demo
 ```
 
 Pour lancer l'appairage depuis Python plutôt que depuis les paramètres Windows :
 
 ```bash
-python -m pc.buddy --pair --address AA:BB:CC:DD:EE:FF demo
+python -m pc.buddy --pair --address AC:EB:E6:3E:B2:26 demo
 ```
 
 La fenêtre BOOT doit être ouverte au préalable. Une confirmation physique reste
