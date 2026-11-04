@@ -9,6 +9,7 @@ from neopixel import NeoPixel
 
 import board_config as cfg
 from buddy_ble import BuddyBLE
+from buddy_usb import BuddyUSB
 from buddy_ui import BuddyUI
 from st7789 import LCD, rgb
 from shared_spi import SharedSPI
@@ -33,6 +34,7 @@ def run():
                     "pet": player.pet_id if player is not None and player.available else None}
 
         buddy = BuddyBLE(asset_status=asset_status)
+        usb = BuddyUSB(asset_status=asset_status)
         ui = BuddyUI(lcd, led, player)
         button = Pin(cfg.BOOT_BUTTON, Pin.IN, Pin.PULL_UP)
         raw_level = button.value()
@@ -40,7 +42,7 @@ def run():
         changed_at = time.ticks_ms()
         pressed_at = None
         long_sent = False
-        print("OpenBuddy BLE ready; hold BOOT 3s to allow pairing")
+        print("OpenBuddy BLE and USB ready; hold BOOT 3s to allow BLE pairing")
         while True:
             now = time.ticks_ms()
             level = button.value()
@@ -61,7 +63,9 @@ def run():
                 buddy.button(long_press=True)
                 long_sent = True
             buddy.tick(now)
-            ui.draw(buddy, now)
+            usb.tick(now)
+            pairing = buddy.pairing_open(now) or buddy.passkey is not None
+            ui.draw(usb if usb.online(now) and not pairing else buddy, now)
             time.sleep_ms(20)
     except Exception as error:
         sys.print_exception(error)

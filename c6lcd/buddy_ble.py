@@ -8,15 +8,14 @@ import os
 import struct
 import time
 
-from buddy_protocol import (CHUNK_SIZE, DEVICE_NAME, HEARTBEAT_MS, MAX_FRAME,
-                            RX_UUID, SERVICE_UUID, TX_UUID, VERSION,
-                            Decoder, encode, validate_command)
+from buddy_protocol import (CHUNK_SIZE, DEVICE_NAME, FIRMWARE_VERSION,
+                            HEARTBEAT_MS, MAX_FRAME, RX_UUID, SERVICE_UUID,
+                            TX_UUID, VERSION, Decoder, encode, validate_command)
 
 PAIR_WINDOW_MS = 60_000
 PAIR_CONFIRM_MS = 30_000
 HID_ARM_MS = 15_000
 BOND_FILE = "openbuddy-bonds.json"
-FIRMWARE_VERSION = "0.2.0"
 # These documented flags are not exported by every MicroPython build.
 READ_ENCRYPTED = 0x0200
 READ_AUTHENTICATED = 0x0400

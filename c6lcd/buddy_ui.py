@@ -53,6 +53,7 @@ class BuddyUI:
         lcd.fill_rect(x + 44, y + 48, 12, 8, accent)
 
     def draw(self, buddy, now):
+        usb = getattr(buddy, "kind", None) == "usb"
         pairing = buddy.pairing_open(now) or buddy.passkey is not None
         state = "pairing" if pairing else buddy.state if buddy.online(now) else "offline"
         color = COLORS[state]
@@ -70,8 +71,8 @@ class BuddyUI:
         else:
             detail = ((printable(buddy.label)[:24] or "Awaiting events")
                       if buddy.online(now) else "No Python bridge")
-            footer = "BOOT: EVENT | HOLD 3s: PAIR"
-        link = "BLE SECURE" if buddy.secure else "BLE WAIT"
+            footer = "USB BRIDGE ACTIVE" if usb else "BOOT: EVENT | HOLD 3s: PAIR"
+        link = "USB LINK" if usb else "BLE SECURE" if buddy.secure else "BLE WAIT"
         asset_ready = self.player is not None and self.player.available
         snapshot = (state, detail, footer, link, asset_ready)
         changed = snapshot != self.previous
@@ -86,7 +87,8 @@ class BuddyUI:
             lcd.text(LABELS[state], 124, 55, accent, BACKGROUND, 2)
             scale = 2 if buddy.passkey is not None else 1
             lcd.text(detail[:24], 124, 87, WHITE, BACKGROUND, scale)
-            lcd.text("PET / MICROSD" if asset_ready else "HID + GATT / v1",
+            lcd.text("PET / MICROSD" if asset_ready
+                     else "USB SERIAL / v1" if usb else "HID + GATT / v1",
                      124, 113, MUTED, BACKGROUND)
             lcd.fill_rect(12, 141, 296, 1, accent)
             lcd.text(footer, 12, 153, MUTED, BACKGROUND)

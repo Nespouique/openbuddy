@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 FILES = ("board_config.py", "shared_spi.py", "sdcard_spi.py", "storage.py",
-         "st7789.py", "buddy_protocol.py", "buddy_ble.py", "pet_player.py",
+         "st7789.py", "buddy_protocol.py", "buddy_ble.py", "buddy_usb.py", "pet_player.py",
          "buddy_ui.py", "companion.py", "orientation_demo.py", "main.py")
 
 

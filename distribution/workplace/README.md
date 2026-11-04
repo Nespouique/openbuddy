@@ -209,6 +209,22 @@ Pour désactiver uniquement les toasts :
 Cette variante permet les sons des événements OpenCode même si le Bluetooth n'est
 pas disponible ; elle ne met pas à jour l'ESP32.
 
+### Piloter l'ESP32 par USB, sans Bluetooth
+
+Si la politique du poste bloque l'accès GATT (`Access Denied`), l'ESP32 peut être
+piloté par son câble USB, avec le même écran, la même animation et le même halo :
+
+```powershell
+.\.venv\Scripts\python.exe -m pc.buddy --serial auto status
+.\.venv\Scripts\python.exe -m pc.opencode --serial auto
+```
+
+Cela demande le **firmware 0.3.0**, que ce kit n'embarque pas : utiliser plutôt le
+kit **`openbuddy-workplace-usb.zip`**, qui contient le firmware, `pc.deploy` et un
+README dédié. Les boutons et le clavier HID ne sont pas disponibles en USB. Un seul
+programme à la fois peut utiliser le port COM. L'appairage Bluetooth n'est pas
+nécessaire dans ce mode.
+
 ## Diagnostic et arrêt
 
 Dans un deuxième terminal, placé dans le même dossier :

@@ -11,6 +11,8 @@ changing firmware or integration code.
 - LCD and SD share one SPI controller. Never initialize native `machine.SDCard`
   concurrently with the LCD; it is reserved for the USB installer.
 - BLE bonding keys and bridge discovery tokens are private. Do not commit them.
+- USB serial uses `--serial auto` or an explicit port, with DTR/RTS low. Stop the
+  bridge before using deployment/REPL tools on the same port; USB has no HID actions.
 - The OpenCode integration targets v2 events and the local managed service, not
   legacy hooks. Buttons and notifications do not approve permissions.
 - Build the standalone plugin with `npm --prefix integration/openbuddy run build`,

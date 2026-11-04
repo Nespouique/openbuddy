@@ -108,7 +108,63 @@ class HTTPTests(unittest.IsolatedAsyncioTestCase):
         await self.bridge.close()
         self.assertFalse(self.path.exists())
 
+    async def test_usb_worker_delivers_states_and_reports_connection(self):
+        class FakeUsbLink:
+            def __init__(self):
+                self.requests = []
+                self.disconnected = asyncio.Event()
+                self.closed = False
+
+            async def request(self, command, **fields):
+                self.requests.append((command, fields))
+
+            def close(self):
+                self.closed = True
+
+        link = FakeUsbLink()
+
+        async def open_link(port, on_event):
+            return link
+
+        bridge = Bridge(port=0, path=Path(self.directory.name) / "usb.json", mute=True,
+                        no_notifications=True, serial_port="auto")
+        with patch("pc.opencode.find_serial_port", return_value="COM6"), \
+                patch("pc.opencode.UsbLink.open", open_link):
+            await bridge.start()
+            try:
+                bridge.registry.update(message(state="working"))
+                for _ in range(40):
+                    if bridge.last_delivered:
+                        break
+                    await asyncio.sleep(0.05)
+                self.assertEqual(bridge.last_delivered["state"], "working")
+                self.assertEqual(link.requests[0], ("status", {}))
+                self.assertTrue(bridge.health()["usb_connected"])
+                self.assertFalse(bridge.health()["ble_connected"])
+            finally:
+                await bridge.close()
+        self.assertFalse(bridge.health()["usb_connected"])
+        self.assertTrue(link.closed)
+
     async def test_control_ignores_environment_proxies_for_loopback(self):
         with patch.dict("os.environ", {"http_proxy": "http://127.0.0.1:1", "HTTP_PROXY": "http://127.0.0.1:1", "no_proxy": "", "NO_PROXY": ""}):
             health = await asyncio.to_thread(control, self.path, "health")
         self.assertTrue(health["read_only"])
+
+
+class CommandLineTests(unittest.TestCase):
+    def test_status_and_stop_explain_that_no_bridge_is_running(self):
+        from pc import opencode
+
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "bridge.json"
+            for command in ("status", "stop"):
+                with self.subTest(command=command), \
+                        patch.object(opencode, "discovery_path", return_value=missing), \
+                        patch("sys.argv", ["pc.opencode", command]), \
+                        patch("sys.stderr") as stderr, \
+                        self.assertRaises(SystemExit) as raised:
+                    opencode.main()
+                self.assertEqual(raised.exception.code, 1)
+                written = "".join(call.args[0] for call in stderr.write.call_args_list)
+                self.assertIn("No OpenBuddy bridge is running", written)

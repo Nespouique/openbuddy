@@ -20,10 +20,11 @@ def files():
         "plugin/openbuddy/package.json": ROOT / "integration/openbuddy/dist/package.json",
         "plugin/openbuddy/LICENSES.txt": ROOT / "integration/openbuddy/dist/LICENSES.txt",
     }
-    patterns = ("c6lcd/*.py", "pc/*.py", "pc/requirements*.txt", "tools/*.py", "tests/*.py",
+    patterns = ("c6lcd/*.py", "pc/*.py", "pc/requirements*.txt", "tools/*.py", "tools/*.cmd", "tests/*.py",
                 "integration/openbuddy/src/*.ts", "integration/openbuddy/test/*.ts",
                 "integration/openbuddy/assets/*", "integration/openbuddy/*.json",
-                "integration/openbuddy/build.mjs", "distribution/workplace/*.md", "distribution/public/*.md",
+                "integration/openbuddy/build.mjs", "distribution/workplace/*.md",
+                "distribution/workplace/requirements*.txt", "distribution/public/*.md",
                 "docs/animations.md", "docs/ble-prototype.md", "docs/opencode-events.md", "docs/hardware.md")
     for pattern in patterns:
         for path in ROOT.glob(pattern):

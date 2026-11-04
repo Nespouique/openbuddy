@@ -26,23 +26,28 @@ def verify(archive_path, temporary_root):
         with zipfile.ZipFile(archive_path) as archive:
             if sum(item.file_size for item in archive.infolist()) > 32 * 1024 * 1024:
                 raise ValueError("Unexpected archive size")
+            root_name = archive.namelist()[0].split("/")[0]
+            if root_name not in ("openbuddy-workplace", "openbuddy-workplace-usb"):
+                raise ValueError("Unexpected archive root")
             for name in archive.namelist():
                 path = PurePosixPath(name)
-                if (not name.startswith("openbuddy-workplace/") or ".." in path.parts
+                if (not name.startswith(root_name + "/") or ".." in path.parts
                         or "\\" in name or ":" in name or path.is_absolute()):
                     raise ValueError("Unsafe archive path")
                 if any(value in name for value in ("bridge.json", "bonds.json", "__pycache__", ".venv/", "node_modules/")):
                     raise ValueError("Private or generated data found in archive")
-            manifest = json.loads(archive.read("openbuddy-workplace/MANIFEST.json"))
-            expected = {"openbuddy-workplace/" + name for name in manifest["files"]}
-            expected.update({"openbuddy-workplace/MANIFEST.json", "openbuddy-workplace/SHA256SUMS.txt"})
+            manifest = json.loads(archive.read(root_name + "/MANIFEST.json"))
+            if manifest["package"] != root_name:
+                raise ValueError("Manifest does not match the archive")
+            expected = {root_name + "/" + name for name in manifest["files"]}
+            expected.update({root_name + "/MANIFEST.json", root_name + "/SHA256SUMS.txt"})
             if set(archive.namelist()) != expected:
                 raise ValueError("Archive contains undeclared files")
             for name, digest in manifest["files"].items():
-                if hashlib.sha256(archive.read("openbuddy-workplace/" + name)).hexdigest() != digest:
+                if hashlib.sha256(archive.read(root_name + "/" + name)).hexdigest() != digest:
                     raise ValueError("Archive checksum mismatch: " + name)
             archive.extractall(root)
-        kit = root / "openbuddy-workplace"
+        kit = root / root_name
         environment = os.environ.copy()
         environment["LOCALAPPDATA"] = str(root / "isolated-profile")
         environment["XDG_CACHE_HOME"] = str(root / "isolated-cache")
@@ -58,6 +63,12 @@ def verify(archive_path, temporary_root):
         command([python, "-m", "pc.install_plugin", "--config-dir", str(root / "isolated-config")], kit, environment)
         command([python, "-m", "pc.opencode", "--no-ble", "--mute", "--no-notifications", "--port", "0", "--duration", "0.5"], kit, environment)
         command([python, "-m", "pc.opencode", "sound-test", "--mute"], kit, environment)
+        if manifest.get("variant") == "usb":
+            command([python, "-c", "import serial, mpremote; from pc.buddy import UsbLink; "
+                     "print('USB kit imports OK')"], kit, environment)
+            command([python, "-m", "pc.deploy", "--help"], kit, environment)
+            command([python, "-m", "pc.opencode", "--serial", "COM999", "--mute", "--no-notifications",
+                     "--port", "0", "--duration", "1"], kit, environment)
         if shutil.which("node"):
             plugin = (root / "isolated-config/plugins/openbuddy/index.js").as_uri()
             code = "const {default:p}=await import(%s); if(p.id!=='openbuddy.events'||typeof p.setup!=='function') throw new Error('Bad bundle'); console.log('Isolated standalone plugin import OK')" % json.dumps(plugin)

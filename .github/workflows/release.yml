@@ -39,10 +39,16 @@ jobs:
         run: npm --prefix integration/openbuddy test
       - name: Plugin types
         run: npm --prefix integration/openbuddy run typecheck
-      - name: Build offline workplace ZIP
-        run: python tools/package_workplace.py --download-wheels
-      - name: Verify clean offline installation
-        run: python tools/verify_workplace.py
+      - name: Build offline workplace ZIPs
+        run: |
+          python tools/package_workplace.py --variant bluetooth --download-wheels
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/package_workplace.py --variant usb --download-wheels
+      - name: Verify clean offline installations
+        run: |
+          python tools/verify_workplace.py dist/openbuddy-workplace.zip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/verify_workplace.py dist/openbuddy-workplace-usb.zip
       - name: Publish versioned release
         shell: pwsh
         env:
@@ -56,5 +62,5 @@ jobs:
             Write-Host "Release $tag already exists; leaving its assets untouched."
             exit 0
           }
-          gh release create $tag dist/openbuddy-workplace.zip dist/openbuddy-workplace.zip.sha256 --repo "$env:GITHUB_REPOSITORY" --target "$env:GITHUB_SHA" --title "OpenBuddy $version - Windows notifications and offline kit" --notes-file distribution/workplace/RELEASE.md
+          gh release create $tag dist/openbuddy-workplace.zip dist/openbuddy-workplace.zip.sha256 dist/openbuddy-workplace-usb.zip dist/openbuddy-workplace-usb.zip.sha256 --repo "$env:GITHUB_REPOSITORY" --target "$env:GITHUB_SHA" --title "OpenBuddy $version - Windows notifications, Bluetooth and USB offline kits" --notes-file distribution/workplace/RELEASE.md
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

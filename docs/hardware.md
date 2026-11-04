@@ -55,6 +55,19 @@ un appui long BOOT 3 s, la vérification du code, puis un **deuxième appui cour
 Un seul hôte BLE est accepté à la fois. Windows peut conserver la connexion HID
 après l'arrêt du pont Python : déconnecter l'ancien hôte avant un nouvel appairage.
 
+## USB série
+
+Le firmware **0.3.0** accepte également les états par le port USB-Serial/JTAG
+intégré, sans appairage Bluetooth. Le pont se lance avec
+`python -m pc.opencode --serial auto` (ou `--serial COMx`).
+Les boutons et le clavier HID ne sont pas exposés par ce transport. Un seul outil
+peut ouvrir le port série à la fois : arrêter le pont avant un déploiement, un
+transfert d'assets ou une session REPL. L'USB doit être autorisé sur le poste.
+
+Ce mode conserve le brochage, les limites de luminosité et la SD en lecture seule.
+Le firmware conserve aussi son transport BLE ; seul le pont lancé avec `--serial`
+n'utilise pas Bluetooth. Voir le [guide USB](../distribution/workplace/README-usb.md).
+
 Les identifiants de carte, ports personnels et journaux de diagnostic ne font
 pas partie du dépôt public. L'adresse BLE réelle se découvre avec `pc.buddy scan`.
 

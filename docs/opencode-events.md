@@ -74,6 +74,33 @@ Le champ `sounds_enabled` indique si les notifications sonores sont activées.
 Options utiles : `--address AA:BB:CC:DD:EE:FF`, `--port 19847`, `--no-ble`
 (diagnostic sans périphérique), `--duration 60` (essai limité à 60 secondes).
 
+## Transport USB, sans Bluetooth
+
+Le firmware **0.3.0** accepte aussi le même protocole JSON par lignes sur son port
+série USB (COM). Le pont n'utilise alors **aucun Bluetooth** : l'écran, l'animation
+Goku et le halo sont identiques. Les boutons ne sont pas remontés et le clavier
+HID (F13) n'existe pas dans ce mode ; `hid_arm` est refusé.
+
+```bash
+python -m pc.opencode --serial auto
+python -m pc.opencode --serial COM6
+python -m pc.buddy --serial auto status
+python -m pc.buddy --serial auto demo
+python -m pc.buddy --serial auto scan
+```
+
+`auto` choisit l'unique port série Espressif (VID `303A`) ; s'il y en a plusieurs,
+indiquer `COMx`. Le port est ouvert avec DTR/RTS à l'état bas pour ne pas
+redémarrer la carte. **Un seul programme à la fois** peut utiliser le port : arrêter
+le pont avant `mpremote`, `pc.deploy` ou `pc.pet`. `status` ajoute `usb_connected`.
+
+Le firmware pilote l'écran avec le transport USB s'il a reçu une commande valide
+dans les 15 dernières secondes ; sinon il revient à l'affichage BLE. Les deux
+transports peuvent coexister, mais n'utilisez qu'un pont à la fois. Pour mettre à
+jour la carte avec ce transport : `python -m pc.deploy --port COMx` (nécessite
+`mpremote`, voir `pc/requirements-assets.txt`). Les clés Bluetooth et la SD sont
+conservées.
+
 Les changements sous le dossier global `plugins/` sont rechargés par OpenCode.
 Si le plugin n'apparaît pas après une première copie, utiliser **`/reload`**.
 L'installation ne modifie pas `opencode.json(c)` ni les autres plugins.
@@ -173,8 +200,12 @@ Bleak ; aucune bibliothèque Windows-Toasts ancienne n'est nécessaire.
 ## Utilisation sur le PC de travail
 
 Un kit transférable avec dépendances hors ligne et installation guidée est généré
-dans **`dist/openbuddy-workplace.zip`**. Son README est également consultable dans
-[`distribution/workplace/README.md`](../distribution/workplace/README.md).
+dans **`dist/openbuddy-workplace.zip`** (variante Bluetooth, README
+[`distribution/workplace/README.md`](../distribution/workplace/README.md)) et
+**`dist/openbuddy-workplace-usb.zip`** (variante USB, avec firmware 0.3.0 et
+`pc.deploy`, README
+[`distribution/workplace/README-usb.md`](../distribution/workplace/README-usb.md)) :
+`python tools/package_workplace.py --variant usb --download-wheels`.
 Le kit cible CPython **3.11–3.14, Windows x64**, sans Node/npm ni droits admin.
 Il inclut un installateur global/par projet qui préserve les configurations et
 sauvegarde une ancienne copie OpenBuddy avant un remplacement explicite.
@@ -236,5 +267,10 @@ ne contient que le client OpenCode, pas ces bibliothèques de globbing.
 - Notification sonore sur une question réelle confirmée par l'utilisateur ;
   pont relancé avec `sounds_enabled: true` et repli pour `SystemQuestion` silencieux.
 - Bannière Windows et son confirmés ensemble par l'utilisateur sur une question réelle.
-- **71 tests Python + 11 tests TypeScript**, vérification de types et import du
-  bundle autonome validés. Aucun changement du firmware 0.2.0 ou de la SD requis.
+- Transport USB confirmé fonctionnel sur le PC de travail par l'utilisateur,
+  avec le firmware 0.3.0. Aucun nouveau test matériel ou déploiement n'a été fait
+  pendant l'intégration de cette version.
+- **101 tests Python + 11 tests TypeScript**, vérification de types, build et
+  installation hors ligne des deux kits dans des venv neufs validés sous
+  CPython 3.13/Windows x64. Wheels incluses pour 3.11–3.14 ; ces autres ABI n'ont
+  pas été exécutées ici. USB exige le firmware 0.3.0, sans modification de la SD.
