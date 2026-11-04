@@ -29,9 +29,10 @@ class DemoTests(unittest.TestCase):
         self.assertEqual(display.image.getpixel((3, 5)), (255, 255, 255))
         self.assertEqual(display.image.getpixel((0, 0)), (0, 0, 0))
 
-    def test_storyboard_covers_all_states_and_both_transports(self):
-        self.assertEqual({scene.state for scene in SCENES}, set(STATES) | {"offline"})
-        self.assertEqual({scene.mode for scene in SCENES}, {"usb", "ble"})
+    def test_storyboard_shows_each_screen_exactly_once(self):
+        states = [scene.state for scene in SCENES]
+        self.assertEqual(set(states), set(STATES) | {"offline"})
+        self.assertEqual(len(states), len(set(states)))
         self.assertTrue(all(scene.duration % 100 == 0 for scene in SCENES))
 
     def test_missing_pack_is_not_silently_replaced_by_a_fake_pet(self):
@@ -54,8 +55,8 @@ class DemoTests(unittest.TestCase):
                                         "frame_ms": 100, "bytes": 16}},
             }
             (pet / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-            scenes = (Scene("idle", "Ready", "A test", "idle", "OpenCode ready", "usb", 300),
-                      Scene("question", "Question", "A test", "form.created", "Waiting", "ble", 300))
+            scenes = (Scene("idle", "Ready", "A test", "idle", "OpenCode ready", 300),
+                      Scene("question", "Question", "A test", "form.created", "Waiting", 300))
             gif, poster = root / "demo.gif", root / "poster.png"
             generate(pet, gif, poster, scenes=scenes)
             with Image.open(gif) as animation:

@@ -121,7 +121,8 @@ modifiable avec `--quota-config FICHIER`. `--no-quota` désactive la commande.
 ```json
 {
   "provider": "github-copilot",
-  "refresh_seconds": 300,
+  "refresh_seconds": 600,
+  "refresh_on": ["success"],
   "providers": {
     "github-copilot": {
       "command": ["gh", "api", "copilot_internal/user", "--jq", ".quota_snapshots.premium_interactions"],
@@ -137,10 +138,17 @@ modifiable avec `--quota-config FICHIER`. `--no-quota` désactive la commande.
 - `command` est une liste, ou une chaîne découpée comme dans un shell POSIX. Elle
   est lancée **sans shell**, avec un délai de 20 s et une sortie limitée à 64 Ko.
 - `used` et `limit` désignent des champs numériques de l'objet JSON renvoyé (chemin
-  pointé accepté, par exemple `a.b`). `label` optionnel est ajouté devant le texte.
-- `refresh_seconds` : 60 au minimum, 300 par défaut. Le fichier est relu à chaque
-  rafraîchissement. En cas d'échec, le dernier texte valide est conservé et l'erreur
-  est visible dans `python -m pc.opencode status` (`quota_error`).
+  pointé accepté, par exemple `a.b`). Les milliers sont séparés par une espace
+  (`10 000 / 15 000`). `label` optionnel est ajouté devant le texte.
+- `refresh_seconds` : période de rafraîchissement, 60 au minimum, 600 par défaut.
+- `refresh_on` : états qui déclenchent en plus un rafraîchissement immédiat quand
+  l'agent **y entre** (`["success"]` par défaut, soit la fin de réponse ; on peut y
+  ajouter `error`, etc.). Deux déclenchements rapprochés partagent un seul appel :
+  il y a au moins 10 s entre deux exécutions de la commande.
+- Le fichier est relu à chaque rafraîchissement. En cas d'échec, le dernier texte
+  valide est conservé et l'erreur est visible dans `python -m pc.opencode status`
+  (`quota_error`). Le compteur du fournisseur peut avoir quelques secondes de retard
+  sur la fin de réponse.
 
 La commande `gh` utilise `GITHUB_TOKEN` en priorité : un jeton invalide dans
 l'environnement du pont fait échouer la requête (HTTP 401) même si `gh auth login` est valide.

@@ -240,6 +240,7 @@ class Bridge:
             view = self.registry.current()
             self.notifier.observe(view["state"] if view is not None else None)
             self.desktop_notifier.observe(view["state"] if view is not None else None)
+            self.quota.observe(view["state"] if view is not None else None)
             await asyncio.sleep(0.25)
 
     async def ble_worker(self):

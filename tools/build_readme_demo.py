@@ -40,33 +40,28 @@ class Scene:
     description: str
     event: str
     label: str
-    mode: str
     duration: int
 
 
 SCENES = (
     Scene("idle", "Prêt à démarrer", "Le compagnon attend l'activité\nd'une session OpenCode.",
-          "Aucune exécution active", "OpenCode ready", "usb", 1600),
+          "Aucune exécution active", "OpenCode ready", 1600),
     Scene("thinking", "L'agent réfléchit", "L'activité de raisonnement\nfait évoluer l'état du compagnon.",
-          "session.reasoning.started", "OpenCode active", "usb", 2600),
+          "session.reasoning.started", "OpenCode active", 2600),
     Scene("working", "L'agent travaille", "Un outil s'exécute :\nGoku passe à l'action.",
-          "session.tool.called", "Running tools", "usb", 2000),
+          "session.tool.called", "Running tools", 2000),
     Scene("permission", "À vous de valider", "Une autorisation est en attente.\nLa validation reste dans OpenCode.",
-          "permission.asked", "1 approval(s) pending", "usb", 2300),
+          "permission.asked", "1 approval(s) pending", 2300),
     Scene("question", "Une réponse attendue", "OpenCode pose une question.\nLe pet et le halo vous alertent.",
-          "form.created", "1 response(s) pending", "usb", 2300),
+          "form.created", "1 response(s) pending", 2300),
     Scene("success", "Réponse terminée", "L'exécution a réussi.\nGoku fête la fin de la tâche.",
-          "session.execution.succeeded", "Response ready", "usb", 1800),
-    Scene("working", "Même synchro, sans fil", "Le transport change,\nles états restent identiques.",
-          "session.tool.called", "Running tools", "ble", 1600),
+          "session.execution.succeeded", "Response ready", 1800),
     Scene("error", "Une erreur survient", "L'exécution a échoué.\nLes détails restent dans OpenCode.",
-          "session.execution.failed", "Execution failed", "ble", 1800),
+          "session.execution.failed", "Execution failed", 1800),
     Scene("retry", "Nouvelle tentative", "OpenCode attend avant de réessayer.\nLe compagnon indique RETRY.",
-          "session.retry.scheduled", "Retry scheduled", "ble", 4200),
-    Scene("success", "C'est reparti !", "La nouvelle exécution a réussi.\nLe même pet, en USB ou Bluetooth.",
-          "session.execution.succeeded", "Response ready", "ble", 1800),
+          "session.retry.scheduled", "Retry scheduled", 4200),
     Scene("offline", "Plus de source active", "Sans heartbeat, retour OFFLINE\naprès 15 s (transition illustrée).",
-          "Expiration du heartbeat", "", "ble", 1800),
+          "Expiration du heartbeat", "", 1800),
 )
 
 
@@ -177,21 +172,12 @@ def text(draw, xy, value, size=16, color=WHITE, bold=False, mono=False):
     draw.text(xy, value, font=font(size, bold, mono), fill=color, anchor="lt")
 
 
-def pill(draw, box, label, active, accent):
-    draw.rounded_rectangle(box, radius=8, fill=(22, 46, 45) if active else PANEL,
-                           outline=accent if active else BORDER, width=1)
-    text(draw, (box[0] + 14, box[1] + 12), label, 13,
-         accent if active else MUTED, bold=True)
-
-
 def compose(screen, scene, index, color, progress=0, total=len(SCENES)):
     image = Image.new("RGB", SIZE, BACKGROUND)
     draw = ImageDraw.Draw(image)
     text(draw, (36, 24), "OPENCODE  ×  ESP32", 12, TEAL, mono=True)
     text(draw, (34, 49), "OpenBuddy", 42, bold=True)
     text(draw, (286, 67), "Votre session, en un regard.", 19, MUTED)
-    pill(draw, (814, 48, 934, 88), "LOCAL USB", scene.mode == "usb", TEAL)
-    pill(draw, (946, 48, 1084, 88), "BLUETOOTH", scene.mode == "ble", TEAL)
     draw.line((36, 119, 1084, 119), fill=BORDER)
 
     draw.rounded_rectangle((36, 150, 368, 510), radius=14, fill=PANEL, outline=BORDER)
@@ -227,7 +213,7 @@ def compose(screen, scene, index, color, progress=0, total=len(SCENES)):
             draw.rounded_rectangle((x, 534, x + max(2, int(width * progress)), 538), radius=2, fill=color)
 
     nodes = ((36, 566, 334, 610), (390, 566, 690, 610), (746, 566, 1084, 610))
-    labels = ("1  Événements OpenCode", "2  Pont Python local", "3  " + ("USB série → écran + halo" if scene.mode == "usb" else "Bluetooth LE → écran + halo"))
+    labels = ("1  Événements OpenCode", "2  Pont Python local", "3  USB série ou Bluetooth LE → écran + halo")
     for box, label in zip(nodes, labels):
         draw.rounded_rectangle(box, radius=8, fill=PANEL, outline=BORDER)
         text(draw, (box[0] + 16, box[1] + 13), label, 14, WHITE)
@@ -265,7 +251,7 @@ def generate(pet_dir, output, poster, scenes=SCENES):
         try:
             # Use one shared palette, trained on every state, to avoid color flicker.
             for index, scene in enumerate(scenes):
-                buddy.state, buddy.label, buddy.kind = scene.state, scene.label, scene.mode
+                buddy.state, buddy.label, buddy.kind = scene.state, scene.label, "usb"
                 buddy.online = lambda _now, state=scene.state: state != "offline"
                 ui.draw(buddy, now)
                 samples.append(compose(display.image, scene, index, ui_module.COLORS[scene.state], 0.5, len(scenes)))
@@ -278,7 +264,7 @@ def generate(pet_dir, output, poster, scenes=SCENES):
             player.clip = None
             now = 0
             for index, scene in enumerate(scenes):
-                buddy.state, buddy.label, buddy.kind = scene.state, scene.label, scene.mode
+                buddy.state, buddy.label, buddy.kind = scene.state, scene.label, "usb"
                 buddy.online = lambda _now, state=scene.state: state != "offline"
                 for elapsed in range(0, scene.duration, STEP_MS):
                     # Preserve the firmware's 20ms update cadence and clip timings.
