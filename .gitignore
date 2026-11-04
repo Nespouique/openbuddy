@@ -11,6 +11,5 @@ dist/
 bridge.json
 .env
 .env.*
-/AGENTS.md
 /docs/hardware-notes.md
 /main.py

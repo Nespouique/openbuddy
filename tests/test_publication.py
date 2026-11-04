@@ -1,6 +1,7 @@
 """Keep the public source allowlist complete without exporting private notes."""
 
 from pathlib import Path
+import re
 import unittest
 
 from tools.prepare_publication import MEDIA_FILES, ROOT, files, prepare
@@ -18,7 +19,14 @@ class PublicationTests(unittest.TestCase):
         selected = files()
         self.assertNotIn("docs/hardware-notes.md", selected)
         self.assertNotIn("openbuddy-bonds.json", selected)
-        self.assertEqual(selected["AGENTS.md"], selected["distribution/public/AGENTS.md"])
+        self.assertEqual(selected["AGENTS.md"], ROOT / "AGENTS.md")
+        self.assertNotIn("distribution/public/AGENTS.md", selected)
+
+    def test_agents_guide_contains_no_private_identifiers(self):
+        text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIsNone(re.search(r"(?i)\b[0-9a-f]{2}(:[0-9a-f]{2}){5}\b", text))
+        self.assertIsNone(re.search(r"\bCOM[0-9]+\b", text))
+        self.assertNotIn("C:\\Users", text)
 
     def test_readme_media_is_explicit_and_never_treated_as_source_text(self):
         selected = files()

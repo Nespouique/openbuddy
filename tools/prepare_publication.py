@@ -14,7 +14,7 @@ MEDIA_FILES = ("docs/media/openbuddy-demo.gif", "docs/media/openbuddy-demo.png")
 def files():
     selected = {
         ".gitignore": ROOT / ".gitignore",
-        "AGENTS.md": ROOT / "distribution/public/AGENTS.md",
+        "AGENTS.md": ROOT / "AGENTS.md",
         "README.md": ROOT / "README.md",
         "THIRD_PARTY.md": ROOT / "THIRD_PARTY.md",
         "tools/assets/font_petme128_8x8.h": ROOT / "tools/assets/font_petme128_8x8.h",
@@ -27,7 +27,7 @@ def files():
                 "integration/openbuddy/src/*.ts", "integration/openbuddy/test/*.ts",
                 "integration/openbuddy/assets/*", "integration/openbuddy/*.json",
                 "integration/openbuddy/build.mjs", "distribution/workplace/*.md",
-                "distribution/workplace/requirements*.txt", "distribution/public/*.md",
+                "distribution/workplace/requirements*.txt",
                 "docs/animations.md", "docs/ble-prototype.md", "docs/opencode-events.md", "docs/hardware.md")
     for pattern in patterns:
         for path in ROOT.glob(pattern):
