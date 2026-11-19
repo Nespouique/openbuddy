@@ -96,6 +96,19 @@ plusieurs. **Garder le pont actif**. Les lanceurs `tools\openbuddy-usb.cmd` et
 `tools\openbuddy-usb-stop.cmd` permettent aussi de le démarrer en arrière-plan et
 de l'arrêter, sans démarrage automatique Windows.
 
+Pour tester manuellement l'écran et le halo dans une page web, arrêter d'abord le
+pont USB puis lancer :
+
+```powershell
+.\.venv\Scripts\python.exe -m pc.webtest --port auto
+```
+
+Ouvrir `http://127.0.0.1:8765/` dans le navigateur. La page affiche le statut et
+permet d'envoyer chacun des états du firmware. `auto` sélectionne l'unique port
+Espressif ; sinon, préciser `--port COMx`. Le serveur reste local à la machine et
+garde le port ouvert jusqu'à `Ctrl+C` ; ne pas lancer simultanément `pc.opencode`,
+`pc.buddy`, `mpremote` ou un terminal série sur ce port.
+
 Si le firmware doit être mis à jour, arrêter d'abord le pont et les autres outils
 série, puis :
 
