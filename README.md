@@ -45,6 +45,29 @@ permissions, questions, succès et erreurs. `--mute` coupe seulement les sons ;
 texte de question ou résultats d'outils. Les boutons ne valident aucune autorisation
 automatiquement : les réponses restent dans OpenCode.
 
+## Démarrer le pont et l'interface web
+
+Le lancement du pont **démarre systématiquement la console web locale** sur **`http://127.0.0.1:8765/`** (un seul processus, aucun conflit de port série). Depuis la racine du dépôt :
+
+```powershell
+# Avec ESP32 branché en USB-C (recommandé)
+.\.venv\Scripts\python.exe -m pc.opencode --serial auto
+
+# Avec ESP32 appairé en Bluetooth
+.\.venv\Scripts\python.exe -m pc.opencode
+
+# Sans ESP32 (pet virtuel animé + fenêtre flottante + sons/notifications Windows)
+.\.venv\Scripts\python.exe -m pc.opencode --no-ble
+```
+
+Ouvrir ensuite **`http://127.0.0.1:8765/`** dans le navigateur :
+
+- **Administration du bridge à chaud** : choix du transport (`USB`, `Bluetooth` ou `Sans ESP32`), port COM, sons système, notifications Windows, quota fournisseur et choix du pet — enregistrés dans `%APPDATA%\openbuddy\bridge-config.json`.
+- **Aperçu du pet animé & tests manuels** : écran virtuel 320×172 fidèle au firmware (avec le pack local de `build/pets/` ou le robot intégré) et boutons pour tester chaque état sur l'ESP32 et à l'écran.
+- **Bouton `Keep the pet visible`** : affiche le pet animé et sa bulle d'état dans une **fenêtre flottante transparente toujours au premier plan** au-dessus des autres applications — **clic simple** pour ramener VS Code ou le terminal OpenCode au premier plan, **glisser-déposer** pour le déplacer, **clic droit** pour redimensionner (`1×`/`2×`) ou fermer (`--overlay` l'ouvre dès le démarrage).
+
+Options utiles : `--web-port PORT` change le port HTTP local (`8765` par défaut), `--no-web` désactive la console web.
+
 ## Deux modes, le même compagnon
 
 | | Local USB | Bluetooth |
@@ -92,22 +115,16 @@ Brancher le câble de données, puis lancer depuis la racine du dépôt :
 ```
 
 `auto` sélectionne l'unique port Espressif ; utiliser `--serial COMx` s'il y en a
-plusieurs. **Garder le pont actif**. Les lanceurs `tools\openbuddy-usb.cmd` et
-`tools\openbuddy-usb-stop.cmd` permettent aussi de le démarrer en arrière-plan et
-de l'arrêter, sans démarrage automatique Windows.
+plusieurs. **Garder le pont actif** : la console web locale démarre automatiquement
+sur **`http://127.0.0.1:8765/`** (configuration, aperçu du pet, tests d'états et
+mode fenêtre flottante `Keep the pet visible`). Les lanceurs `tools\openbuddy-usb.cmd`
+et `tools\openbuddy-usb-stop.cmd` permettent aussi de démarrer le pont et sa console
+web en arrière-plan et de les arrêter, sans démarrage automatique Windows.
 
-Pour tester manuellement l'écran et le halo dans une page web, arrêter d'abord le
-pont USB puis lancer :
-
-```powershell
-.\.venv\Scripts\python.exe -m pc.webtest --port auto
-```
-
-Ouvrir `http://127.0.0.1:8765/` dans le navigateur. La page affiche le statut et
-permet d'envoyer chacun des états du firmware. `auto` sélectionne l'unique port
-Espressif ; sinon, préciser `--port COMx`. Le serveur reste local à la machine et
-garde le port ouvert jusqu'à `Ctrl+C` ; ne pas lancer simultanément `pc.opencode`,
-`pc.buddy`, `mpremote` ou un terminal série sur ce port.
+Pour un diagnostic USB minimaliste sans lancer le pont OpenCode, arrêter d'abord
+le pont puis lancer `.\.venv\Scripts\python.exe -m pc.webtest --port auto`
+(`http://127.0.0.1:8765/`). Ne pas lancer simultanément deux outils sur le même
+port série (`pc.opencode`, `pc.webtest`, `pc.buddy`, `mpremote`).
 
 Si le firmware doit être mis à jour, arrêter d'abord le pont et les autres outils
 série, puis :
@@ -192,7 +209,11 @@ Un kit existant n'est remplacé qu'avec `--replace`.
 | `c6lcd/pet_player.py` | Lecteur RGB565, une image en RAM |
 | `c6lcd/orientation_demo.py` | Ancienne démo conservée |
 | `pc/buddy.py` | Diagnostic BLE et USB en Python |
-| `pc/opencode.py` | Pont événements locaux → BLE/USB, authentifié et en lecture seule |
+| `pc/opencode.py` | Pont événements locaux → BLE/USB/virtuel, authentifié et en lecture seule |
+| `pc/web_admin.py` | Console web locale d'administration, aperçu du pet et contrôle du pont |
+| `pc/pet_store.py` | Découverte des packs RGB565 locaux et décodage sans Pillow |
+| `pc/pet_overlay.py` | Fenêtre flottante toujours visible (« Keep the pet visible ») en `tkinter` |
+| `pc/webtest.py` | Page web autonome minimale de test USB série |
 | `pc/notifications.py` | Sons système Windows non bloquants |
 | `pc/toasts.py` | Notifications Windows natives, sans données privées |
 | `pc/install_plugin.py` | Installation globale/par projet sans modifier la configuration |

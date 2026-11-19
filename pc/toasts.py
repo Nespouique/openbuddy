@@ -65,6 +65,10 @@ class DesktopNotifier:
         self.error = None
         self.warned = False
 
+    def set_enabled(self, enabled):
+        self.enabled = bool(enabled) and (self.poster is not None or sys.platform == "win32")
+        return self.enabled
+
     def post(self, title, body):
         if not self.enabled:
             return False

@@ -34,10 +34,29 @@ class SoundNotifier:
         self.last_played = {}
         self.clock = clock
         self.warned = False
+        self._explicit_player = player is not None
         self.player = player
-        if self.player is None and not muted and sys.platform == "win32":
+        if self.player is None and sys.platform == "win32":
             self.player = windows_play_sound
         self.enabled = not muted and self.player is not None
+
+    def set_enabled(self, enabled):
+        if enabled and self.player is None and not self._explicit_player and sys.platform == "win32":
+            self.player = windows_play_sound
+        self.enabled = bool(enabled) and self.player is not None
+        return self.enabled
+
+    def play(self, state):
+        if not self.enabled or state not in SOUND_ALIASES or self.player is None:
+            return False
+        try:
+            self.player(SOUND_ALIASES[state])
+            return True
+        except (RuntimeError, OSError):
+            if not self.warned:
+                print("Windows sound unavailable; display and BLE remain active", flush=True)
+                self.warned = True
+            return False
 
     def observe(self, state):
         if state == self.previous:
@@ -49,11 +68,4 @@ class SoundNotifier:
         if now - self.last_played.get(state, -float("inf")) < 2:
             return False
         self.last_played[state] = now
-        try:
-            self.player(SOUND_ALIASES[state])
-            return True
-        except (RuntimeError, OSError):
-            if not self.warned:
-                print("Windows sound unavailable; display and BLE remain active", flush=True)
-                self.warned = True
-            return False
+        return self.play(state)
