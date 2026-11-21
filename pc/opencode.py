@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import contextlib
+import ctypes
 from dataclasses import dataclass
 import hmac
 import json
@@ -10,19 +11,23 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shlex
+import struct
 import sys
 import tempfile
 import time
 from urllib.request import ProxyHandler, Request, build_opener
 
-from bleak import BleakClient
-from bleak.exc import BleakError
-
-from c6lcd.buddy_protocol import SERVICE_UUID, STATES, TX_UUID
-from pc.buddy import Link, UsbLink, find_device, find_serial_port
+from c6lcd.buddy_protocol import STATES
+from pc.buddy import UsbLink, find_serial_port
 from pc.notifications import SOUND_ALIASES, SoundNotifier
+from pc.pet import (CLIP_LABELS, CLIPS, STATE_CLIPS, clip_frames, convert,
+                    default_states_for_clips, fetch_codex_pet, has_pillow,
+                    write_pack_from_clips)
 from pc.pet_overlay import OverlayController
-from pc.pet_store import BUILTIN_PET_ID, resolve_pet, safe_name
+from pc.pet_store import (BUILTIN_PET_ID, REQUIRED_STATES, default_pet_roots,
+                          delete_pack, resolve_pet, safe_name,
+                          update_pack_states, user_pets_dir)
 from pc.quota import QuotaMonitor
 from pc.toasts import DesktopNotifier
 from pc.web_admin import DEFAULT_WEB_PORT, WebAdminRunner
@@ -30,7 +35,7 @@ from pc.web_admin import DEFAULT_WEB_PORT, WebAdminRunner
 LEASE_SECONDS = 12
 PRIORITY = {"permission": 100, "question": 90, "working": 60, "retry": 55,
             "thinking": 50, "error": 40, "success": 30, "idle": 0}
-VALID_TRANSPORTS = ("usb", "ble", "none")
+VALID_TRANSPORTS = ("usb", "none")
 
 
 def discovery_path():
@@ -51,12 +56,12 @@ def bridge_config_path():
 
 def default_bridge_config():
     return {
-        "transport": "ble",
+        "transport": "usb",
         "serial_port": "auto",
-        "ble_address": "",
         "sounds_enabled": True,
         "notifications_enabled": True,
         "quota_enabled": True,
+        "require_opencode_client": True,
         "pet": "auto",
         "overlay_scale": 1,
     }
@@ -74,19 +79,14 @@ def validate_bridge_config(updates):
     if "transport" in updates:
         value = updates["transport"]
         if value not in VALID_TRANSPORTS:
-            raise ValueError("Invalid transport: must be usb, ble, or none")
+            raise ValueError("Invalid transport: must be usb or none")
         cleaned["transport"] = value
     if "serial_port" in updates:
         value = updates["serial_port"]
         if not isinstance(value, str) or len(value.strip()) > 64:
             raise ValueError("Invalid serial_port")
         cleaned["serial_port"] = value.strip() or "auto"
-    if "ble_address" in updates:
-        value = updates["ble_address"]
-        if not isinstance(value, str) or len(value.strip()) > 64:
-            raise ValueError("Invalid ble_address")
-        cleaned["ble_address"] = value.strip()
-    for flag in ("sounds_enabled", "notifications_enabled", "quota_enabled"):
+    for flag in ("sounds_enabled", "notifications_enabled", "quota_enabled", "require_opencode_client"):
         if flag in updates:
             if type(updates[flag]) is not bool:
                 raise ValueError("%s must be a boolean" % flag)
@@ -113,6 +113,9 @@ def load_bridge_config(path):
             return config
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
         if isinstance(raw, dict):
+            # Migrate legacy BLE transport configs gracefully to USB.
+            if raw.get("transport") == "ble":
+                raw = dict(raw, transport="usb")
             subset = {k: v for k, v in raw.items() if k in config}
             config.update(validate_bridge_config(subset))
     except (OSError, ValueError, TypeError):
@@ -213,19 +216,196 @@ class Registry:
         return {key: best.view[key] for key in ("state", "label")}
 
 
+def is_background_service_command(cmdline):
+    """Return True when an opencode command line is the background daemon or service helper."""
+    if not isinstance(cmdline, str) or not cmdline.strip():
+        return False
+    try:
+        tokens = [tok.strip("\"'").lower() for tok in shlex.split(cmdline, posix=False)]
+    except ValueError:
+        tokens = [tok.strip("\"'").lower() for tok in cmdline.split()]
+    args = tokens[1:]
+    if "--service" in args:
+        return True
+    for token in args:
+        if token.startswith("-"):
+            continue
+        return token in ("serve", "service")
+    return False
+
+
+def _read_process_cmdline_windows(pid):
+    """Read a same-user Windows process command line via PEB without spawning a subprocess."""
+    from ctypes import wintypes
+
+    class PROCESS_BASIC_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("Reserved1", ctypes.c_void_p),
+            ("PebBaseAddress", ctypes.c_void_p),
+            ("Reserved2", ctypes.c_void_p * 2),
+            ("UniqueProcessId", ctypes.c_void_p),
+            ("Reserved3", ctypes.c_void_p),
+        ]
+
+    class UNICODE_STRING(ctypes.Structure):
+        _fields_ = [
+            ("Length", wintypes.USHORT),
+            ("MaximumLength", wintypes.USHORT),
+            ("Buffer", ctypes.c_void_p),
+        ]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    nt = ctypes.WinDLL("ntdll")
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.ReadProcessMemory.restype = wintypes.BOOL
+    k32.ReadProcessMemory.argtypes = [
+        wintypes.HANDLE, ctypes.c_void_p, ctypes.c_void_p,
+        ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t),
+    ]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    nt.NtQueryInformationProcess.argtypes = [
+        wintypes.HANDLE, wintypes.ULONG, ctypes.c_void_p,
+        wintypes.ULONG, ctypes.POINTER(wintypes.ULONG),
+    ]
+
+    handle = k32.OpenProcess(0x0410, False, pid)  # PROCESS_QUERY_INFORMATION | PROCESS_VM_READ
+    if not handle:
+        return None
+    try:
+        pbi = PROCESS_BASIC_INFORMATION()
+        needed = wintypes.ULONG()
+        if nt.NtQueryInformationProcess(handle, 0, ctypes.byref(pbi), ctypes.sizeof(pbi), ctypes.byref(needed)) != 0:
+            return None
+        if not pbi.PebBaseAddress:
+            return None
+        is_64 = struct.calcsize("P") == 8
+        params_offset = 0x20 if is_64 else 0x10
+        cmdline_offset = 0x70 if is_64 else 0x40
+        params_ptr = ctypes.c_void_p()
+        read = ctypes.c_size_t()
+        if not k32.ReadProcessMemory(handle, pbi.PebBaseAddress + params_offset,
+                                     ctypes.byref(params_ptr), ctypes.sizeof(params_ptr), ctypes.byref(read)):
+            return None
+        if not params_ptr.value:
+            return None
+        ustr = UNICODE_STRING()
+        if not k32.ReadProcessMemory(handle, params_ptr.value + cmdline_offset,
+                                     ctypes.byref(ustr), ctypes.sizeof(ustr), ctypes.byref(read)):
+            return None
+        if not ustr.Length or not ustr.Buffer or ustr.Length > 32768:
+            return ""
+        buf = ctypes.create_unicode_buffer(ustr.Length // 2 + 1)
+        if not k32.ReadProcessMemory(handle, ustr.Buffer, buf, ustr.Length, ctypes.byref(read)):
+            return None
+        return buf.value
+    finally:
+        k32.CloseHandle(handle)
+
+
+def _list_opencode_pids_windows():
+    """Return PIDs of running opencode*.exe processes via Toolhelp32."""
+    from ctypes import wintypes
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_void_p),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", wintypes.LONG),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    k32 = ctypes.windll.kernel32
+    snap = k32.CreateToolhelp32Snapshot(0x00000002, 0)
+    if not snap or snap == ctypes.c_void_p(-1).value:
+        return None
+    pids = []
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        if k32.Process32FirstW(snap, ctypes.byref(entry)):
+            while True:
+                exe = (entry.szExeFile or "").lower()
+                if exe == "opencode.exe" or (exe.startswith("opencode-") and exe.endswith(".exe")):
+                    pids.append(entry.th32ProcessID)
+                if not k32.Process32NextW(snap, ctypes.byref(entry)):
+                    break
+    finally:
+        k32.CloseHandle(snap)
+    return pids
+
+
+def has_interactive_opencode_client():
+    """Return True if an interactive OpenCode client is running, False if none, or None if unknown."""
+    if sys.platform == "win32":
+        try:
+            pids = _list_opencode_pids_windows()
+            if pids is None:
+                return None
+            if not pids:
+                return False
+            unreadable = 0
+            for pid in pids:
+                cmdline = _read_process_cmdline_windows(pid)
+                if cmdline is None:
+                    unreadable += 1
+                    continue
+                if not is_background_service_command(cmdline):
+                    return True
+            if unreadable == 0:
+                return False
+            return True if len(pids) >= 2 else None
+        except Exception:
+            return None
+    if sys.platform.startswith("linux"):
+        try:
+            proc = Path("/proc")
+            if not proc.is_dir():
+                return None
+            found_any = False
+            for entry in proc.iterdir():
+                if not entry.name.isdigit():
+                    continue
+                try:
+                    raw = (entry / "cmdline").read_bytes()
+                except OSError:
+                    continue
+                if not raw:
+                    continue
+                parts = [p.decode("utf-8", errors="ignore") for p in raw.split(b"\x00") if p]
+                if not parts:
+                    continue
+                exe = Path(parts[0]).name.lower()
+                if exe == "opencode" or exe.startswith("opencode-"):
+                    found_any = True
+                    if not is_background_service_command(" ".join(parts)):
+                        return True
+            return False if found_any else False
+        except Exception:
+            return None
+    return None
+
+
 class Bridge:
-    def __init__(self, port=19847, address=None, no_ble=False, path=None, mute=False, no_notifications=False,
+    def __init__(self, port=19847, no_ble=False, path=None, mute=False, no_notifications=False,
                  serial_port=None, no_quota=False, quota_path=None, web_port=None, config_path=None,
                  pet="auto", overlay_scale=1, pet_roots=None, overlay_controller=None,
-                 port_lister=None, start_overlay=False):
+                 port_lister=None, start_overlay=False, pet_fetcher=None,
+                 require_opencode_client=True, client_checker=None):
         self.port = port
-        self.address = address or ""
         self.no_ble = no_ble
-        self.serial_port = serial_port
-        self.transport = "usb" if serial_port else ("none" if no_ble else "ble")
+        self.transport = "none" if no_ble else "usb"
         self.serial_port_setting = serial_port or "auto"
+        self.serial_port = None if self.transport == "none" else self.serial_port_setting
         self.serial_port_active = None
         self.usb_connected = False
+        self.ble_connected = False
         self.path = path or discovery_path()
         self.config_path = config_path
         self.token = secrets.token_hex(32)
@@ -234,7 +414,6 @@ class Bridge:
         self.stopped = asyncio.Event()
         self.server = None
         self.loop = None
-        self.ble_connected = False
         self.worker = None
         self.active_link = None
         self.device_status = None
@@ -245,9 +424,15 @@ class Bridge:
         self.quota = QuotaMonitor(quota_path)
         self.no_quota = no_quota
         self.quota_worker = None
+        self.require_opencode_client = bool(require_opencode_client)
+        self.client_checker = client_checker if client_checker is not None else has_interactive_opencode_client
+        self._client_check_at = -float("inf")
+        self._client_check_result = None
         self.pet_selection = pet
         self.overlay_scale = 2 if overlay_scale == 2 else 1
         self.pet_roots = pet_roots
+        self.pet_fetcher = pet_fetcher or fetch_codex_pet
+        self._staged_imports = {}
         self.web_port_requested = web_port
         self.web_port = None
         self.web_runner = None
@@ -259,6 +444,16 @@ class Bridge:
             web_url_provider=lambda: ("http://127.0.0.1:%d/" % self.web_port) if self.web_port else None,
             pet_roots=self.pet_roots,
         )
+
+    def _pet_collection_root(self):
+        if self.pet_roots:
+            return Path(self.pet_roots[0])
+        return user_pets_dir()
+
+    def _pet_cache_root(self):
+        if self.pet_roots:
+            return Path(self.pet_roots[0]).parent / ".pet-cache"
+        return user_pets_dir().parent / "cache/pets"
 
     def _overlay_snapshot(self):
         view = self.effective_view()
@@ -285,19 +480,35 @@ class Bridge:
                 self.loop,
             )
 
+    def _check_opencode_client(self):
+        now = time.monotonic()
+        if now - self._client_check_at >= 1.0:
+            try:
+                self._client_check_result = self.client_checker() if self.client_checker is not None else None
+            except Exception:
+                self._client_check_result = None
+            self._client_check_at = now
+        return self._client_check_result
+
     def effective_view(self):
         if self.manual_state is not None:
             return dict(self.manual_state)
-        return self.registry.current()
+        view = self.registry.current()
+        if view is None:
+            return None
+        if self.require_opencode_client and view.get("state") == "idle":
+            if self._check_opencode_client() is False:
+                return None
+        return view
 
     def get_config(self):
         return {
             "transport": self.transport,
             "serial_port": self.serial_port_setting,
-            "ble_address": self.address,
             "sounds_enabled": self.notifier.enabled,
             "notifications_enabled": self.desktop_notifier.enabled,
             "quota_enabled": not self.no_quota,
+            "require_opencode_client": self.require_opencode_client,
             "pet": self.pet_selection,
             "overlay_scale": self.overlay_scale,
         }
@@ -308,18 +519,33 @@ class Bridge:
 
     def _pet_payload(self):
         active_id, pack, packs = resolve_pet(self.pet_selection, self.pet_roots)
-        available = [
-            {"id": p.pet_id, "builtin": False, "author": p.author}
-            for p in packs.values()
-        ]
-        available.append({"id": BUILTIN_PET_ID, "builtin": True, "author": "OpenBuddy"})
+        allowed_roots = [Path(r).resolve() for r in (default_pet_roots() if self.pet_roots is None else self.pet_roots)]
+        available = []
+        for p in packs.values():
+            entry = p.metadata()
+            entry["deletable"] = p.directory.resolve().parent in allowed_roots
+            available.append(entry)
+        available.append({
+            "id": BUILTIN_PET_ID,
+            "name": "Robot intégré",
+            "builtin": True,
+            "author": "OpenBuddy",
+            "source_url": "",
+            "width": 96,
+            "height": 104,
+            "states": {},
+            "animations": {},
+            "deletable": False,
+        })
         if pack is not None:
             meta = pack.metadata()
         else:
-            meta = {"id": BUILTIN_PET_ID, "builtin": True, "width": 96, "height": 104}
+            meta = {"id": BUILTIN_PET_ID, "name": "Robot intégré", "builtin": True, "width": 96, "height": 104}
         meta["selected"] = self.pet_selection
         meta["active_id"] = active_id
         meta["available"] = available
+        meta["clip_labels"] = dict(CLIP_LABELS)
+        meta["required_states"] = list(REQUIRED_STATES)
         return meta
 
     def dashboard_snapshot(self):
@@ -343,6 +569,107 @@ class Bridge:
             "pet": self._pet_payload(),
         }
 
+    async def import_pet_from_url(self, url, activate=True, states=None):
+        """Download and convert a Codex Pets URL into the local collection."""
+        pet_id, sheet_path, source, pet_meta = await asyncio.to_thread(
+            self.pet_fetcher, url, self._pet_cache_root()
+        )
+        output_dir = self._pet_collection_root() / pet_id
+        if has_pillow():
+            await asyncio.to_thread(
+                convert, sheet_path, output_dir, pet_id, source, None, True, states
+            )
+            if activate:
+                await self.apply_config({"pet": pet_id}, persist=True)
+            return {
+                "status": "imported",
+                "pet_id": pet_id,
+                "dashboard": self.dashboard_snapshot(),
+            }
+        # Pillow is not installed: stage the downloaded spritesheet for browser-side WebP decode.
+        self._staged_imports[pet_id] = {
+            "pet_id": pet_id,
+            "sheet_path": Path(sheet_path),
+            "source": source,
+            "output_dir": output_dir,
+            "activate": bool(activate),
+            "clips": {},
+            "created": time.monotonic(),
+        }
+        return {
+            "status": "needs_client_decode",
+            "pet_id": pet_id,
+            "name": source.get("name") or pet_id,
+            "author": source.get("author") or "",
+            "sheet_url": "/api/pets/staged/%s/spritesheet" % pet_id,
+            "clips": {name: [list(seg) for seg in segments] for name, segments in CLIPS.items()},
+            "default_states": dict(STATE_CLIPS),
+        }
+
+    def get_staged_spritesheet(self, pet_id):
+        staged = self._staged_imports.get(pet_id)
+        if staged is None:
+            raise KeyError(pet_id)
+        return staged["sheet_path"].read_bytes()
+
+    def store_staged_clip(self, pet_id, clip_name, raw_bytes):
+        staged = self._staged_imports.get(pet_id)
+        if staged is None:
+            raise KeyError("Import non trouvé : " + pet_id)
+        if clip_name not in CLIPS:
+            raise ValueError("Clip inconnu : " + clip_name)
+        expected_frames = clip_frames(CLIPS[clip_name])
+        expected_bytes = expected_frames * 96 * 104 * 2
+        if len(raw_bytes) != expected_bytes:
+            raise ValueError("Taille de clip invalide pour %s (%d != %d)" % (clip_name, len(raw_bytes), expected_bytes))
+        staged["clips"][clip_name] = (bytes(raw_bytes), expected_frames)
+        return {"stored": clip_name, "bytes": len(raw_bytes)}
+
+    async def commit_staged_import(self, pet_id, states=None, activate=None):
+        staged = self._staged_imports.get(pet_id)
+        if staged is None:
+            raise ValueError("Aucun import en cours pour " + pet_id)
+        if "idle" not in staged["clips"]:
+            raise ValueError("Le clip 'idle' est obligatoire")
+        await asyncio.to_thread(
+            write_pack_from_clips,
+            staged["output_dir"],
+            pet_id,
+            staged["source"],
+            staged["clips"],
+            states=states,
+            force=True,
+        )
+        should_activate = staged["activate"] if activate is None else bool(activate)
+        self._staged_imports.pop(pet_id, None)
+        if should_activate:
+            await self.apply_config({"pet": pet_id}, persist=True)
+        return {
+            "status": "imported",
+            "pet_id": pet_id,
+            "dashboard": self.dashboard_snapshot(),
+        }
+
+    async def update_pet_mapping(self, pet_id, states=None, reset=False):
+        pack = self.get_pet_pack(pet_id)
+        if pack is None:
+            raise ValueError("Pet introuvable dans la collection : " + str(pet_id))
+        target_states = default_states_for_clips(pack.animations.keys()) if reset else states
+        await asyncio.to_thread(update_pack_states, pack, target_states)
+        return self.dashboard_snapshot()
+
+    async def delete_pet(self, pet_id):
+        if pet_id == BUILTIN_PET_ID:
+            raise ValueError("Impossible de supprimer le robot intégré")
+        pack = self.get_pet_pack(pet_id)
+        if pack is None:
+            raise ValueError("Pet introuvable dans la collection : " + str(pet_id))
+        allowed = default_pet_roots() if self.pet_roots is None else self.pet_roots
+        await asyncio.to_thread(delete_pack, pack, allowed)
+        if self.pet_selection == pet_id:
+            await self.apply_config({"pet": "auto"}, persist=True)
+        return self.dashboard_snapshot()
+
     async def _restart_transport_worker(self):
         if self.worker is not None:
             self.worker.cancel()
@@ -357,10 +684,6 @@ class Bridge:
             self.serial_port = self.serial_port_setting or "auto"
             self.no_ble = False
             self.worker = asyncio.create_task(self.usb_worker())
-        elif self.transport == "ble":
-            self.serial_port = None
-            self.no_ble = False
-            self.worker = asyncio.create_task(self.ble_worker())
         else:
             self.serial_port = None
             self.no_ble = True
@@ -386,10 +709,6 @@ class Bridge:
             self.serial_port_setting = cleaned["serial_port"]
             if self.transport == "usb":
                 transport_changed = True
-        if "ble_address" in cleaned and cleaned["ble_address"] != self.address:
-            self.address = cleaned["ble_address"]
-            if self.transport == "ble":
-                transport_changed = True
         if "sounds_enabled" in cleaned:
             self.notifier.set_enabled(cleaned["sounds_enabled"])
         if "notifications_enabled" in cleaned:
@@ -397,6 +716,9 @@ class Bridge:
         if "quota_enabled" in cleaned:
             self.no_quota = not cleaned["quota_enabled"]
             await self._sync_quota_worker()
+        if "require_opencode_client" in cleaned:
+            self.require_opencode_client = cleaned["require_opencode_client"]
+            self._client_check_at = -float("inf")
         if "pet" in cleaned:
             self.pet_selection = cleaned["pet"]
         if "overlay_scale" in cleaned:
@@ -493,6 +815,7 @@ class Bridge:
 
     def health(self):
         view = self.registry.current()
+        client_active = self._check_opencode_client() if self.require_opencode_client else None
         return {"v": 1, "sources": len(self.registry.sources), "ble_connected": self.ble_connected,
                 "usb_connected": self.usb_connected,
                 "state": view, "last_delivered": self.last_delivered, "read_only": True,
@@ -500,6 +823,7 @@ class Bridge:
                 "notifications_enabled": self.desktop_notifier.enabled,
                 "notifications_last_error": self.desktop_notifier.error,
                 "quota": self.quota.text or None, "quota_error": self.quota.error,
+                "opencode_client_active": client_active,
                 "web_port": self.web_port, "transport": self.transport}
 
     async def handle(self, reader, writer):
@@ -557,41 +881,13 @@ class Bridge:
                 await writer.wait_closed()
 
     async def notification_worker(self):
-        # Audio must not depend on the BLE device being connected.
+        # Audio and desktop notifications never depend on an attached ESP32.
         while True:
             view = self.registry.current()
             self.notifier.observe(view["state"] if view is not None else None)
             self.desktop_notifier.observe(view["state"] if view is not None else None)
             self.quota.observe(view["state"] if view is not None else None)
             await asyncio.sleep(0.25)
-
-    async def ble_worker(self):
-        while True:
-            link = None
-            try:
-                device = await find_device(self.address or None, 5)
-
-                def disconnected(client):
-                    if link is not None:
-                        link.lost(client)
-
-                async with BleakClient(device, services=[SERVICE_UUID], timeout=30,
-                                       disconnected_callback=disconnected) as client:
-                    link = Link(client, lambda event: print("Device event:", event.get("event"), "(read-only)", flush=True))
-                    await client.start_notify(TX_UUID, link.notification)
-                    self.device_status = await link.request("status")
-                    self.active_link = link
-                    self.ble_connected = True
-                    print("OpenBuddy BLE connected", flush=True)
-                    await self.deliver_states(link)
-                    raise ConnectionError("BLE connection closed")
-            except (BleakError, ConnectionError, OSError, TimeoutError, ValueError) as error:
-                print("BLE unavailable:", type(error).__name__, "- retrying", flush=True)
-            finally:
-                self.ble_connected = False
-                if self.active_link is link:
-                    self.active_link = None
-            await asyncio.sleep(3)
 
     async def deliver_states(self, link):
         last, ping_at = None, 0
@@ -668,7 +964,6 @@ def build_bridge_from_args(args, cfg_path=None):
     saved = load_bridge_config(config_file)
     transport = saved["transport"]
     serial_port = saved["serial_port"] if transport == "usb" else None
-    address = saved["ble_address"] or None
     no_ble = transport == "none"
 
     if args.serial is not None:
@@ -677,12 +972,6 @@ def build_bridge_from_args(args, cfg_path=None):
     elif args.no_ble:
         serial_port = None
         no_ble = True
-    elif args.address is not None:
-        serial_port = None
-        no_ble = False
-
-    if args.address is not None:
-        address = args.address
 
     mute = True if args.mute else (not saved["sounds_enabled"])
     no_notifications = True if args.no_notifications else (not saved["notifications_enabled"])
@@ -691,7 +980,6 @@ def build_bridge_from_args(args, cfg_path=None):
 
     return Bridge(
         port=args.port,
-        address=address,
         no_ble=no_ble,
         mute=mute,
         no_notifications=no_notifications,
@@ -703,6 +991,7 @@ def build_bridge_from_args(args, cfg_path=None):
         pet=saved["pet"],
         overlay_scale=saved["overlay_scale"],
         start_overlay=args.overlay,
+        require_opencode_client=saved["require_opencode_client"],
     )
 
 
@@ -736,9 +1025,9 @@ def main():
     parser = argparse.ArgumentParser(description="Read-only OpenCode v2 to OpenBuddy event bridge")
     parser.add_argument("command", choices=("run", "status", "stop", "sound-test", "notification-test"), nargs="?", default="run")
     parser.add_argument("--port", type=int, default=19847)
-    parser.add_argument("--address")
-    parser.add_argument("--serial", metavar="PORT", help="Drive the device over its USB serial port (COMx, or auto) instead of Bluetooth")
-    parser.add_argument("--no-ble", action="store_true", help="Run the bridge and virtual pet without an ESP32 device")
+    parser.add_argument("--serial", metavar="PORT", help="Drive the device over its USB serial port (COMx, or auto)")
+    parser.add_argument("--no-device", "--no-ble", dest="no_ble", action="store_true",
+                        help="Run the bridge and virtual pet without an ESP32 device")
     parser.add_argument("--mute", action="store_true", help="Disable PC sound notifications")
     parser.add_argument("--no-notifications", action="store_true", help="Disable Windows toast notifications, independently of sound")
     parser.add_argument("--no-quota", action="store_true", help="Do not run the provider quota command")

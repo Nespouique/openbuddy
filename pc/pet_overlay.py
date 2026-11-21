@@ -67,6 +67,25 @@ TERMINAL_EXECUTABLES = frozenset({
 DRAG_THRESHOLD_PX = 4
 
 
+def format_quota_status(snapshot):
+    """Build (menu_label, tooltip_text, tone) for the floating pet quota UI.
+
+    `tone` is one of 'ok', 'error', or 'muted'.
+    """
+    quota = (snapshot.get("quota") or "").strip()
+    quota_enabled = snapshot.get("quota_enabled", True)
+    quota_error = (snapshot.get("quota_error") or "").strip()
+    if quota:
+        text = "Quota : %s" % quota
+        return text, text, "ok"
+    if not quota_enabled:
+        return "Quota : désactivé", "Quota : désactivé", "muted"
+    if quota_error:
+        short = quota_error if len(quota_error) <= 36 else quota_error[:35] + "…"
+        return "Quota : erreur (%s)" % short, "Quota : erreur", "error"
+    return "Quota : non configuré", "Quota : non configuré", "muted"
+
+
 def windows_desktop_name():
     """Return the current Win32 desktop name (usually 'Default' for interactive sessions)."""
     if sys.platform != "win32":
@@ -421,7 +440,7 @@ def _post_json(opener, url, payload):
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with opener.open(req, timeout=2.0) as resp:
+    with opener.open(req, timeout=5.0) as resp:
         return json.loads(resp.read())
 
 
@@ -434,7 +453,14 @@ def run_overlay_app(web_url, pet_roots=None):
         "snapshot": {
             "state": "idle",
             "pet": "auto",
+            "pet_active_id": "",
+            "pet_states": {},
+            "pet_signature": None,
             "overlay_scale": 1,
+            "quota": "",
+            "quota_error": "",
+            "quota_enabled": True,
+            "label": "",
         },
         "stop": False,
         "bridge_lost": 0,
@@ -447,12 +473,26 @@ def run_overlay_app(web_url, pet_roots=None):
                 data = _fetch_dashboard(opener, base_url)
                 bridge = data.get("bridge") or {}
                 cfg = data.get("config") or {}
+                pet_meta = data.get("pet") or {}
                 eff = bridge.get("effective_state")
                 state = eff.get("state") if isinstance(eff, dict) and eff.get("state") else "offline"
+                quota_val = (eff.get("info") if isinstance(eff, dict) else None) or bridge.get("quota") or ""
+                anims = pet_meta.get("animations") or {}
+                pet_sig = (
+                    pet_meta.get("active_id") or "",
+                    tuple(sorted((k, v.get("bytes", 0)) for k, v in anims.items() if isinstance(v, dict))),
+                )
                 snap = {
                     "state": state,
                     "pet": cfg.get("pet") or "auto",
+                    "pet_active_id": pet_meta.get("active_id") or "",
+                    "pet_states": dict(pet_meta.get("states") or {}),
+                    "pet_signature": pet_sig,
                     "overlay_scale": 2 if cfg.get("overlay_scale") == 2 else 1,
+                    "quota": quota_val,
+                    "quota_error": bridge.get("quota_error") or "",
+                    "quota_enabled": bool(cfg.get("quota_enabled", True)),
+                    "label": (eff.get("label") if isinstance(eff, dict) else "") or "",
                 }
                 with lock:
                     shared["snapshot"] = snap
@@ -480,9 +520,25 @@ def run_overlay_app(web_url, pet_roots=None):
     canvas = tk.Canvas(root, bg=bg, highlightthickness=0, bd=0, cursor="hand2")
     canvas.pack(fill="both", expand=True)
 
+    # Borderless hover tooltip window for displaying quota cleanly without resizing the pet window.
+    tooltip = tk.Toplevel(root)
+    tooltip.overrideredirect(True)
+    tooltip.attributes("-topmost", True)
+    tooltip.configure(bg="#111827")
+    tooltip_frame = tk.Frame(tooltip, bg="#111827", highlightbackground="#4674ff", highlightthickness=1, padx=8, pady=4)
+    tooltip_frame.pack(fill="both", expand=True)
+    tooltip_label = tk.Label(
+        tooltip_frame, text="", bg="#111827", fg="#edf2ff",
+        font=("Segoe UI", 9, "bold"),
+    )
+    tooltip_label.pack()
+    tooltip.withdraw()
+
+    hover = {"inside": False, "visible": False, "last_key": None}
     drag = {"start_rx": 0, "start_ry": 0, "win_x": 0, "win_y": 0, "moved": False}
     cache = {
         "pet_selection": None,
+        "pet_signature": None,
         "pack": None,
         "scale": None,
         "clips": {},
@@ -497,6 +553,46 @@ def run_overlay_app(web_url, pet_roots=None):
         "topmost_tick": 0,
     }
 
+    def hide_tooltip():
+        if hover["visible"]:
+            tooltip.withdraw()
+            hover["visible"] = False
+
+    def update_tooltip(snap, accent):
+        if not hover["inside"] or drag["moved"]:
+            hide_tooltip()
+            return
+        _, tip_text, tone = format_quota_status(snap)
+        fg = "#edf2ff" if tone == "ok" else ("#fca5a5" if tone == "error" else "#93a3bf")
+        border = accent if tone == "ok" else ("#ff4757" if tone == "error" else "#334155")
+        key = (tip_text, fg, border, root.winfo_x(), root.winfo_y(), cache["window_w"], cache["window_h"])
+        if key != hover["last_key"] or not hover["visible"]:
+            hover["last_key"] = key
+            tooltip_label.configure(text=tip_text, fg=fg)
+            tooltip_frame.configure(highlightbackground=border)
+            tooltip.update_idletasks()
+            tip_w = tooltip.winfo_reqwidth()
+            tip_h = tooltip.winfo_reqheight()
+            wx = root.winfo_x()
+            wy = root.winfo_y()
+            ww = cache["window_w"] or root.winfo_width()
+            wh = cache["window_h"] or root.winfo_height()
+            tx = wx + (ww - tip_w) // 2
+            ty = wy - tip_h - 4
+            work = windows_work_area()
+            if work is not None:
+                left, top, right, bottom = work
+                if ty < top + 4:
+                    ty = min(bottom - tip_h - 4, wy + wh + 4)
+                tx = max(left + 4, min(right - tip_w - 4, tx))
+            elif ty < 4:
+                ty = wy + wh + 4
+            tooltip.geometry("+%d+%d" % (tx, ty))
+            if not hover["visible"]:
+                tooltip.deiconify()
+                hover["visible"] = True
+            _ensure_topmost_windows(tooltip)
+
     def close_app():
         shared["stop"] = True
         cache["clips"].clear()
@@ -507,7 +603,15 @@ def run_overlay_app(web_url, pet_roots=None):
         focus_opencode_window()
         root.after(40, lambda: _ensure_topmost_windows(root))
 
+    def on_enter(_event):
+        hover["inside"] = True
+
+    def on_leave(_event):
+        hover["inside"] = False
+        hide_tooltip()
+
     def on_press(event):
+        hide_tooltip()
         drag["start_rx"] = event.x_root
         drag["start_ry"] = event.y_root
         drag["win_x"] = root.winfo_x()
@@ -537,8 +641,20 @@ def run_overlay_app(web_url, pet_roots=None):
                 pass
         threading.Thread(target=worker, daemon=True).start()
 
+    def refresh_quota():
+        def worker():
+            try:
+                _post_json(opener, base_url + "/api/quota/refresh", {})
+            except Exception:
+                pass
+        threading.Thread(target=worker, daemon=True).start()
+
     menu = tk.Menu(root, tearoff=0, bg="#161f30", fg="#edf2ff",
-                   activebackground="#3b5bdb", activeforeground="#ffffff")
+                   activebackground="#3b5bdb", activeforeground="#ffffff",
+                   disabledforeground="#93c5fd")
+    menu.add_command(label="Quota : …", state="disabled")
+    menu.add_command(label="Actualiser le quota", command=refresh_quota)
+    menu.add_separator()
     menu.add_command(label="Afficher OpenCode (VS Code / Terminal)", command=trigger_focus)
     menu.add_command(label="Ouvrir le panneau OpenBuddy", command=lambda: webbrowser.open(base_url + "/"))
     menu.add_separator()
@@ -548,21 +664,34 @@ def run_overlay_app(web_url, pet_roots=None):
     menu.add_command(label="Fermer", command=close_app)
 
     def show_menu(event):
+        hide_tooltip()
+        with lock:
+            snap = dict(shared["snapshot"])
+        quota_menu_label, _, _ = format_quota_status(snap)
+        menu.entryconfigure(0, label=quota_menu_label)
+        menu.entryconfigure(1, state="normal" if snap.get("quota_enabled", True) else "disabled")
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
 
+    canvas.bind("<Enter>", on_enter)
+    canvas.bind("<Leave>", on_leave)
     canvas.bind("<ButtonPress-1>", on_press)
     canvas.bind("<B1-Motion>", on_motion)
     canvas.bind("<ButtonRelease-1>", on_release)
     canvas.bind("<Button-3>", show_menu)
 
-    def ensure_pack(selection, scale):
-        if selection == cache["pet_selection"] and scale == cache["scale"]:
+    def ensure_pack(selection, scale, pet_signature):
+        if (selection == cache["pet_selection"]
+                and scale == cache["scale"]
+                and pet_signature == cache["pet_signature"]):
             return
+        if pet_signature != cache["pet_signature"]:
+            cache["clips"].clear()
         _, pack, _ = resolve_pet(selection, pet_roots)
         cache["pet_selection"] = selection
+        cache["pet_signature"] = pet_signature
         cache["pack"] = pack
         cache["scale"] = scale
         cache["clip"] = None
@@ -652,7 +781,7 @@ def run_overlay_app(web_url, pet_roots=None):
         pet_sel = snap.get("pet") or "auto"
         scale = 2 if snap.get("overlay_scale") == 2 else 1
 
-        ensure_pack(pet_sel, scale)
+        ensure_pack(pet_sel, scale, snap.get("pet_signature"))
         pack = cache["pack"]
         pet_w = (pack.width if pack is not None else 96) * scale
         pet_h = (pack.height if pack is not None else 96) * scale
@@ -686,11 +815,18 @@ def run_overlay_app(web_url, pet_roots=None):
             cache["layout_key"] = layout_key
             draw_bubble(win_w, bubble_h, accent, state_text)
 
+        update_tooltip(snap, accent)
+
         pet_cx = win_w // 2
         pet_cy = bubble_h + pet_h // 2
 
         if pack is not None:
-            clip = pack.states.get(state, pack.states["idle"])
+            live_states = snap.get("pet_states") or {}
+            mapped = live_states.get(state) if isinstance(live_states, dict) else None
+            if mapped and mapped in pack.animations:
+                clip = mapped
+            else:
+                clip = pack.states.get(state, pack.states["idle"])
             if clip != cache["clip"]:
                 cache["clip"] = clip
                 cache["frame_index"] = 0

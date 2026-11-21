@@ -50,21 +50,22 @@ automatiquement : les réponses restent dans OpenCode.
 Le lancement du pont **démarre systématiquement la console web locale** sur **`http://127.0.0.1:8765/`** (un seul processus, aucun conflit de port série). Depuis la racine du dépôt :
 
 ```powershell
-# Avec ESP32 branché en USB-C (recommandé)
-.\.venv\Scripts\python.exe -m pc.opencode --serial auto
-
-# Avec ESP32 appairé en Bluetooth
+# Avec ESP32 branché en USB-C (par défaut)
 .\.venv\Scripts\python.exe -m pc.opencode
 
+# Port COM explicite
+.\.venv\Scripts\python.exe -m pc.opencode --serial COMx
+
 # Sans ESP32 (pet virtuel animé + fenêtre flottante + sons/notifications Windows)
-.\.venv\Scripts\python.exe -m pc.opencode --no-ble
+.\.venv\Scripts\python.exe -m pc.opencode --no-device
 ```
 
 Ouvrir ensuite **`http://127.0.0.1:8765/`** dans le navigateur :
 
-- **Administration du bridge à chaud** : choix du transport (`USB`, `Bluetooth` ou `Sans ESP32`), port COM, sons système, notifications Windows, quota fournisseur et choix du pet — enregistrés dans `%APPDATA%\openbuddy\bridge-config.json`.
-- **Aperçu du pet animé & tests manuels** : écran virtuel 320×172 fidèle au firmware (avec le pack local de `build/pets/` ou le robot intégré) et boutons pour tester chaque état sur l'ESP32 et à l'écran.
-- **Bouton `Keep the pet visible`** : affiche le pet animé et sa bulle d'état dans une **fenêtre flottante transparente toujours au premier plan** au-dessus des autres applications — **clic simple** pour ramener VS Code ou le terminal OpenCode au premier plan, **glisser-déposer** pour le déplacer, **clic droit** pour redimensionner (`1×`/`2×`) ou fermer (`--overlay` l'ouvre dès le démarrage).
+- **Administration du bridge à chaud** : choix du transport (`USB Série` ou `Sans ESP32`), port COM, sons système, notifications Windows, quota fournisseur et choix du pet — enregistrés dans `%APPDATA%\openbuddy\bridge-config.json` (sans dépendance `bleak`).
+- **Collection de pets & mapping des animations** : ajoutez n'importe quel pet depuis une URL `codex-pets.net` (ex. `https://codex-pets.net/#/pets/ferris-rust-crab` ou `monthly-salary-cat`, avec conversion serveur ou repli navigateur sans Pillow) et personnalisez l'animation du sprite associée à chaque état OpenCode.
+- **Aperçu du pet animé & tests manuels** : écran virtuel 320×172 fidèle au firmware (avec le pack actif ou le robot intégré) et boutons pour tester chaque état sur l'ESP32 et à l'écran.
+- **Bouton `Keep the pet visible`** : affiche le pet animé et sa bulle d'état dans une **fenêtre flottante transparente toujours au premier plan** au-dessus des autres applications — **clic simple** pour ramener VS Code ou le terminal OpenCode au premier plan, **glisser-déposer** pour le déplacer, **survol** ou **clic droit** pour consulter/actualiser le quota, redimensionner (`1×`/`2×`) ou fermer (`--overlay` l'ouvre dès le démarrage).
 
 Options utiles : `--web-port PORT` change le port HTTP local (`8765` par défaut), `--no-web` désactive la console web.
 

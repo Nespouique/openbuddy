@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import struct
 import sys
+import tempfile
 
 from c6lcd.buddy_protocol import STATES
 
@@ -50,15 +51,17 @@ def _rgb565_lut():
     return _RGB565_LUT
 
 
-def default_pet_roots():
-    roots = [ROOT_DIR / "build/pets"]
+def user_pets_dir():
+    """Return the persistent user collection directory for imported pets."""
     if sys.platform == "win32":
         appdata = Path(os.environ.get("APPDATA", Path.home() / "AppData/Roaming"))
-        roots.append(appdata / "openbuddy/pets")
-    else:
-        xdg = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-        roots.append(xdg / "openbuddy/pets")
-    return roots
+        return appdata / "openbuddy/pets"
+    xdg = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return xdg / "openbuddy/pets"
+
+
+def default_pet_roots():
+    return [user_pets_dir(), ROOT_DIR / "build/pets"]
 
 
 @dataclass(frozen=True)
@@ -71,6 +74,8 @@ class PetPack:
     states: dict
     animations: dict
     author: str = ""
+    display_name: str = ""
+    source_url: str = ""
 
     @property
     def frame_bytes(self):
@@ -83,6 +88,7 @@ class PetPack:
     def metadata(self):
         return {
             "id": self.pet_id,
+            "name": self.display_name or self.pet_id,
             "builtin": False,
             "width": self.width,
             "height": self.height,
@@ -98,6 +104,7 @@ class PetPack:
                 for name, info in self.animations.items()
             },
             "author": self.author,
+            "source_url": self.source_url,
         }
 
 
@@ -155,7 +162,16 @@ def validate_pack_directory(directory):
             "bytes": expected,
         }
     source = manifest.get("source")
-    author = source.get("author", "") if isinstance(source, dict) and isinstance(source.get("author"), str) else ""
+    author = ""
+    display_name = ""
+    source_url = ""
+    if isinstance(source, dict):
+        if isinstance(source.get("author"), str):
+            author = source["author"]
+        if isinstance(source.get("name"), str):
+            display_name = source["name"]
+        if isinstance(source.get("url"), str):
+            source_url = source["url"]
     return PetPack(
         pet_id=pet_id,
         directory=root,
@@ -165,7 +181,53 @@ def validate_pack_directory(directory):
         states={state: states[state] for state in REQUIRED_STATES},
         animations=clean_animations,
         author=author,
+        display_name=display_name,
+        source_url=source_url,
     )
+
+
+def update_pack_states(pack, updates):
+    """Validate and atomically persist updated OpenBuddy state -> clip mappings."""
+    if not isinstance(updates, dict) or not updates:
+        raise ValueError("Le mapping des états doit être un objet JSON non vide")
+    unknown_states = set(updates) - set(REQUIRED_STATES)
+    if unknown_states:
+        raise ValueError("État(s) inconnu(s) : " + ", ".join(sorted(unknown_states)))
+    merged = dict(pack.states)
+    for state, clip_name in updates.items():
+        if not isinstance(clip_name, str) or clip_name not in pack.animations:
+            raise ValueError("Animation inconnue pour %s : %r" % (state, clip_name))
+        merged[state] = clip_name
+    manifest_path = pack.directory / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["states"] = merged
+    descriptor, temp_name = tempfile.mkstemp(prefix=".manifest-", suffix=".json", dir=pack.directory)
+    temporary = Path(temp_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(manifest, indent=2) + "\n")
+        os.replace(temporary, manifest_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return validate_pack_directory(pack.directory)
+
+
+def delete_pack(pack, allowed_roots=None):
+    """Safely delete a validated pet pack located directly under an allowed root."""
+    roots = [Path(r).resolve() for r in (default_pet_roots() if allowed_roots is None else allowed_roots)]
+    pack_dir = pack.directory.resolve()
+    if pack_dir.parent not in roots or not safe_name(pack_dir.name):
+        raise ValueError("Suppression refusée hors du dossier de collection")
+    allowed_files = {info["file"] for info in pack.animations.values()}
+    allowed_files.update({"manifest.json", "preview.png", "openbuddy-install.json"})
+    for child in list(pack_dir.iterdir()):
+        if child.is_file() and child.name in allowed_files:
+            child.unlink()
+    try:
+        pack_dir.rmdir()
+    except OSError:
+        # Leave directory if unexpected user files exist inside it.
+        pass
 
 
 def discover_packs(roots=None):

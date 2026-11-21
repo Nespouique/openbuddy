@@ -55,10 +55,10 @@ def verify(archive_path, temporary_root):
         python = str(kit / ".venv/Scripts/python.exe")
         command([python, "-m", "pip", "install", "--disable-pip-version-check", "--no-index",
                  "--find-links", str(kit / "wheelhouse"), "-r", str(kit / "requirements.txt")], kit, environment)
-        command([python, "-c", "import bleak, pc.opencode; import winrt.windows.devices.bluetooth; "
-                 "from pathlib import Path; from importlib.metadata import version; "
-                 "assert Path(bleak.__file__).resolve().is_relative_to(Path('.venv').resolve()); "
-                 "assert version('bleak') == '3.0.2'; print('Fresh offline imports OK')"], kit, environment)
+        command([python, "-c", "import serial, pc.opencode; import winrt.windows.ui.notifications; "
+                 "from pathlib import Path; "
+                 "assert Path(serial.__file__).resolve().is_relative_to(Path('.venv').resolve()); "
+                 "print('Fresh offline imports OK')"], kit, environment)
         command([python, "-m", "pc.install_plugin", "--config-dir", str(root / "isolated-config")], kit, environment)
         command([python, "-m", "pc.install_plugin", "--config-dir", str(root / "isolated-config")], kit, environment)
         command([python, "-m", "pc.opencode", "--no-ble", "--mute", "--no-notifications", "--port", "0", "--duration", "0.5"], kit, environment)

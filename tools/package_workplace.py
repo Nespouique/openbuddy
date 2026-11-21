@@ -21,6 +21,7 @@ FILES = {
     "pc/__init__.py": "pc/__init__.py",
     "pc/buddy.py": "pc/buddy.py",
     "pc/opencode.py": "pc/opencode.py",
+    "pc/pet.py": "pc/pet.py",
     "pc/pet_store.py": "pc/pet_store.py",
     "pc/pet_overlay.py": "pc/pet_overlay.py",
     "pc/web_admin.py": "pc/web_admin.py",

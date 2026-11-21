@@ -45,7 +45,9 @@ class PackageTests(unittest.TestCase):
             self.assertFalse(any(name.startswith(prefix + "c6lcd/buddy_usb") or name.endswith("deploy.py")
                                  for name in names))
             self.assertIn(b"pyserial", archive.read(prefix + "requirements.txt"))
+            self.assertNotIn(b"bleak", archive.read(prefix + "requirements.txt"))
             self.assertNotIn(b"mpremote", archive.read(prefix + "requirements.txt"))
+            self.assertIn(prefix + "pc/pet.py", names)
 
     def test_usb_kit_contains_firmware_deploy_tool_and_usb_readme(self):
         with self.build_kit("usb") as archive:
@@ -58,6 +60,8 @@ class PackageTests(unittest.TestCase):
             requirements = archive.read(prefix + "requirements.txt")
             self.assertIn(b"mpremote", requirements)
             self.assertIn(b"pyserial", requirements)
+            self.assertNotIn(b"bleak", requirements)
+            self.assertIn(prefix + "pc/pet.py", names)
             self.assertEqual(requirements, archive.read(prefix + "pc/requirements.txt"))
             self.assertIn(b"openbuddy-workplace-usb", archive.read(prefix + "README.md"))
             self.assertFalse(any(name.endswith(".sd") or "pets" in name for name in names))

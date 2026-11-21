@@ -9,10 +9,14 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
 
+from PIL import Image
+
 from c6lcd.buddy_protocol import STATES
 from pc.opencode import (Bridge, build_bridge_from_args, load_bridge_config,
                          save_bridge_config, validate_bridge_config)
-from pc.pet_overlay import OverlayController, select_opencode_window
+from pc.pet import CLIPS, OUTPUT_SIZE, clip_frames
+from pc.pet_overlay import (OverlayController, format_quota_status,
+                            select_opencode_window)
 from pc.pet_store import (BUILTIN_PET_ID, CHROMA_KEY_RGB, discover_packs,
                           resolve_pet, rgb565, rgb565_frame_to_ppm)
 
@@ -37,6 +41,7 @@ def create_synthetic_pack(root, pet_id="demo-pet"):
     frame = struct.pack(">4H", bg565, fg565, fg565, bg565)
     clip_bytes = frame * 2
     (pack_dir / "idle.rgb565").write_bytes(clip_bytes)
+    (pack_dir / "waving.rgb565").write_bytes(clip_bytes)
     manifest = {
         "version": 1,
         "id": pet_id,
@@ -45,14 +50,20 @@ def create_synthetic_pack(root, pet_id="demo-pet"):
         "height": height,
         "background": bg,
         "states": {state: "idle" for state in STATES + ("offline", "pairing")},
-        "source": {"author": "unit-test"},
+        "source": {"name": "Demo Pet", "author": "unit-test"},
         "animations": {
             "idle": {
                 "file": "idle.rgb565",
                 "frames": 2,
                 "frame_ms": 260,
                 "bytes": len(clip_bytes),
-            }
+            },
+            "waving": {
+                "file": "waving.rgb565",
+                "frames": 2,
+                "frame_ms": 300,
+                "bytes": len(clip_bytes),
+            },
         },
     }
     (pack_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -94,6 +105,7 @@ class PetStoreTests(unittest.TestCase):
             active_id, pack, _ = resolve_pet("auto", [tmp])
             self.assertEqual(active_id, "mini-pet")
             self.assertIsNotNone(pack)
+            self.assertEqual(pack.display_name, "Demo Pet")
 
             ppm = rgb565_frame_to_ppm(clip_bytes[:8], 2, 2, transparent_rgb565=bg565)
             header, pixels = ppm.split(b"\n255\n", 1)
@@ -108,6 +120,25 @@ class PetStoreTests(unittest.TestCase):
             self.assertEqual(active_builtin, BUILTIN_PET_ID)
             self.assertIsNone(builtin_pack)
 
+    def test_format_quota_status_for_hover_and_menu(self):
+        self.assertEqual(
+            format_quota_status({"quota": "12 / 200", "quota_enabled": True}),
+            ("Quota : 12 / 200", "Quota : 12 / 200", "ok"),
+        )
+        self.assertEqual(
+            format_quota_status({"quota": "", "quota_enabled": False}),
+            ("Quota : désactivé", "Quota : désactivé", "muted"),
+        )
+        menu_err, tip_err, tone_err = format_quota_status(
+            {"quota": "", "quota_enabled": True, "quota_error": "HTTP 401"}
+        )
+        self.assertIn("HTTP 401", menu_err)
+        self.assertEqual((tip_err, tone_err), ("Quota : erreur", "error"))
+        self.assertEqual(
+            format_quota_status({"quota": "", "quota_enabled": True}),
+            ("Quota : non configuré", "Quota : non configuré", "muted"),
+        )
+
     def test_overlay_controller_reports_isolated_desktop(self):
         controller = OverlayController(
             web_url_provider=lambda: "http://127.0.0.1:8765",
@@ -119,7 +150,6 @@ class PetStoreTests(unittest.TestCase):
         self.assertIn("bureau isolé", controller.error)
 
     def test_select_opencode_window_prioritizes_opencode_host_then_vscode_or_terminal(self):
-        # Case 1: VS Code hosts pwsh -> opencode.exe, even if Chrome is higher in Z-order.
         procs = {
             100: (1, "chrome.exe"),
             200: (1, "Code.exe"),
@@ -134,7 +164,6 @@ class PetStoreTests(unittest.TestCase):
         ]
         self.assertEqual(select_opencode_window(windows, procs, self_pid=999), 20)
 
-        # Case 2: Detached opencode.exe (parent exited) -> prefers window titled OpenCode, else VS Code.
         detached_procs = {
             100: (1, "chrome.exe"),
             200: (1, "Code.exe"),
@@ -157,27 +186,29 @@ class PetStoreTests(unittest.TestCase):
 
 
 class BridgeConfigTests(unittest.TestCase):
-    def test_config_validation_and_cli_merge(self):
+    def test_config_validation_legacy_ble_migration_and_cli_merge(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_file = Path(tmp) / "bridge-config.json"
-            save_bridge_config(cfg_file, {
-                "transport": "usb",
+            # Legacy config containing transport="ble" and ble_address migrates cleanly to usb.
+            cfg_file.write_text(json.dumps({
+                "transport": "ble",
+                "ble_address": "AA:BB:CC:DD:EE:FF",
                 "serial_port": "COM9",
-                "ble_address": "",
                 "sounds_enabled": False,
                 "notifications_enabled": True,
                 "quota_enabled": False,
                 "pet": "builtin",
                 "overlay_scale": 2,
-            })
+            }), encoding="utf-8")
             loaded = load_bridge_config(cfg_file)
             self.assertEqual(loaded["transport"], "usb")
             self.assertEqual(loaded["serial_port"], "COM9")
+            self.assertNotIn("ble_address", loaded)
             self.assertFalse(loaded["sounds_enabled"])
             self.assertEqual(loaded["overlay_scale"], 2)
 
             args = SimpleNamespace(
-                port=19847, address=None, serial=None, no_ble=False,
+                port=19847, serial=None, no_ble=False,
                 mute=False, no_notifications=False, no_quota=False,
                 quota_config=None, web_port=8765, no_web=False, overlay=False,
             )
@@ -190,11 +221,13 @@ class BridgeConfigTests(unittest.TestCase):
             self.assertEqual(bridge.pet_selection, "builtin")
             self.assertEqual(bridge.overlay_scale, 2)
 
-            # Explicit --no-ble overrides saved USB transport.
+            # Explicit --no-ble / --no-device overrides saved USB transport.
             args.no_ble = True
             bridge_virtual = build_bridge_from_args(args, cfg_path=cfg_file)
             self.assertEqual(bridge_virtual.transport, "none")
 
+        with self.assertRaises(ValueError):
+            validate_bridge_config({"transport": "ble"})
         with self.assertRaises(ValueError):
             validate_bridge_config({"transport": "wifi"})
         with self.assertRaises(ValueError):
@@ -211,6 +244,22 @@ class WebAdminIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.pets_root = Path(self.tmp.name) / "pets"
         _, self.clip_bytes, _ = create_synthetic_pack(self.pets_root, "test-pet")
         self.overlay = FakeOverlay()
+
+        # Synthetic local Codex Pets spritesheet for mocked URL imports.
+        self.sheet_v2 = Path(self.tmp.name) / "ferris.png"
+        Image.new("RGBA", (1536, 2288), (220, 80, 40, 255)).save(self.sheet_v2)
+
+        def fake_fetcher(url, _cache_root=None):
+            from pc.pet import parse_codex_pet_url
+
+            pet_id = parse_codex_pet_url(url)
+            source = {
+                "name": "Ferris",
+                "url": "https://codex-pets.net/#/pets/" + pet_id,
+                "author": "mahirmehtizadee",
+            }
+            return pet_id, self.sheet_v2, source, {"displayName": "Ferris"}
+
         self.bridge = Bridge(
             port=0,
             no_ble=True,
@@ -223,6 +272,7 @@ class WebAdminIntegrationTests(unittest.IsolatedAsyncioTestCase):
             pet_roots=[self.pets_root],
             overlay_controller=self.overlay,
             port_lister=lambda: [{"device": "COM42", "description": "Mock ESP32", "espressif": True}],
+            pet_fetcher=fake_fetcher,
         )
         await self.bridge.start()
         self.base = "http://127.0.0.1:%d" % self.bridge.web_port
@@ -234,7 +284,7 @@ class WebAdminIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def _get(self, path):
         def call():
-            with self.opener.open(self.base + path, timeout=3) as resp:
+            with self.opener.open(self.base + path, timeout=5) as resp:
                 return resp.status, resp.read()
         return await asyncio.to_thread(call)
 
@@ -244,7 +294,19 @@ class WebAdminIntegrationTests(unittest.IsolatedAsyncioTestCase):
             if headers:
                 hdrs.update(headers)
             req = Request(self.base + path, data=json.dumps(payload).encode("utf-8"), headers=hdrs, method="POST")
-            with self.opener.open(req, timeout=3) as resp:
+            with self.opener.open(req, timeout=10) as resp:
+                return resp.status, json.loads(resp.read())
+        return await asyncio.to_thread(call)
+
+    async def _post_binary(self, path, data):
+        def call():
+            req = Request(
+                self.base + path,
+                data=data,
+                headers={"Content-Type": "application/octet-stream"},
+                method="POST",
+            )
+            with self.opener.open(req, timeout=10) as resp:
                 return resp.status, json.loads(resp.read())
         return await asyncio.to_thread(call)
 
@@ -254,6 +316,10 @@ class WebAdminIntegrationTests(unittest.IsolatedAsyncioTestCase):
         text = html.decode("utf-8")
         self.assertIn("OpenBuddy Studio", text)
         self.assertIn("Keep the pet visible", text)
+        self.assertIn("Collection de pets", text)
+        self.assertIn("Animations disponibles", text)
+        self.assertIn("États OpenCode", text)
+        self.assertNotIn("cfgBleAddress", text)
 
         status, raw = await self._get("/api/dashboard")
         self.assertEqual(status, 200)
@@ -278,14 +344,17 @@ class WebAdminIntegrationTests(unittest.IsolatedAsyncioTestCase):
             "sounds_enabled": False,
             "notifications_enabled": False,
             "quota_enabled": False,
+            "require_opencode_client": False,
         })
         self.assertEqual(status, 200)
         self.assertEqual(data["config"]["pet"], "builtin")
         self.assertEqual(data["config"]["overlay_scale"], 2)
+        self.assertFalse(data["config"]["require_opencode_client"])
         self.assertTrue(self.config_file.is_file())
         saved = load_bridge_config(self.config_file)
         self.assertEqual(saved["pet"], "builtin")
         self.assertEqual(saved["overlay_scale"], 2)
+        self.assertFalse(saved["require_opencode_client"])
 
         status, data = await self._post("/api/state", {"state": "thinking", "label": "Demo", "info": "5 / 200"})
         self.assertEqual(status, 200)
@@ -307,6 +376,80 @@ class WebAdminIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, 200)
         self.assertFalse(data["overlay"]["visible"])
 
+    async def test_import_pet_from_url_customize_mapping_reset_and_delete(self):
+        status, res = await self._post("/api/pets/import", {
+            "url": "https://codex-pets.net/#/pets/ferris-rust-crab",
+            "activate": True,
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(res["status"], "imported")
+        self.assertEqual(res["pet_id"], "ferris-rust-crab")
+        self.assertEqual(res["dashboard"]["pet"]["active_id"], "ferris-rust-crab")
+        self.assertEqual(res["dashboard"]["pet"]["name"], "Ferris")
+        self.assertIn("look", res["dashboard"]["pet"]["animations"])
+
+        # Customize state -> sprite animation mapping
+        status, dash = await self._post("/api/pets/ferris-rust-crab/mapping", {
+            "states": {"thinking": "waving", "working": "jumping", "permission": "failed"},
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(dash["pet"]["states"]["thinking"], "waving")
+        self.assertEqual(dash["pet"]["states"]["working"], "jumping")
+        self.assertEqual(dash["pet"]["states"]["permission"], "failed")
+        # Persisted on disk in manifest.json
+        manifest = json.loads((self.pets_root / "ferris-rust-crab/manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["states"]["thinking"], "waving")
+
+        # Reset mapping back to defaults
+        status, dash = await self._post("/api/pets/ferris-rust-crab/mapping", {"reset": True})
+        self.assertEqual(status, 200)
+        self.assertEqual(dash["pet"]["states"]["thinking"], "look")
+        self.assertEqual(dash["pet"]["states"]["working"], "running")
+
+        # Delete pet from collection
+        status, dash = await self._post("/api/pets/ferris-rust-crab/delete", {})
+        self.assertEqual(status, 200)
+        self.assertFalse((self.pets_root / "ferris-rust-crab").exists())
+        self.assertEqual(dash["config"]["pet"], "auto")
+        self.assertNotIn("ferris-rust-crab", [p["id"] for p in dash["pet"]["available"]])
+
+        # Deleting builtin must fail
+        with self.assertRaises(HTTPError) as err:
+            await self._post("/api/pets/builtin/delete", {})
+        self.assertEqual(err.exception.code, 400)
+
+    async def test_import_pet_without_pillow_uses_staged_client_decode_flow(self):
+        with patch("pc.opencode.has_pillow", return_value=False):
+            status, res = await self._post("/api/pets/import", {
+                "url": "https://codex-pets.net/#/pets/monthly-salary-cat",
+                "activate": True,
+            })
+        self.assertEqual(status, 200)
+        self.assertEqual(res["status"], "needs_client_decode")
+        self.assertEqual(res["pet_id"], "monthly-salary-cat")
+
+        # Fetch staged spritesheet
+        status, sheet_bytes = await self._get(res["sheet_url"])
+        self.assertEqual(status, 200)
+        self.assertEqual(sheet_bytes, self.sheet_v2.read_bytes())
+
+        # Upload decoded RGB565 clips (idle and waving)
+        frame_bytes = OUTPUT_SIZE[0] * OUTPUT_SIZE[1] * 2
+        for clip_name in ("idle", "waving"):
+            raw = b"\x00\x1f" * (OUTPUT_SIZE[0] * OUTPUT_SIZE[1] * clip_frames(CLIPS[clip_name]))
+            status, up = await self._post_binary(f"/api/pets/staged/monthly-salary-cat/clip/{clip_name}", raw)
+            self.assertEqual(status, 200)
+            self.assertEqual(up["bytes"], clip_frames(CLIPS[clip_name]) * frame_bytes)
+
+        # Commit staged import with custom mapping
+        status, committed = await self._post("/api/pets/staged/monthly-salary-cat/commit", {
+            "states": {"working": "waving"},
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(committed["status"], "imported")
+        self.assertEqual(committed["dashboard"]["pet"]["active_id"], "monthly-salary-cat")
+        self.assertEqual(committed["dashboard"]["pet"]["states"]["working"], "waving")
+
     async def test_security_rejections(self):
         with self.assertRaises(HTTPError) as err:
             await self._post("/api/state", {"state": "idle"}, headers={"Origin": "http://example.invalid"})
@@ -319,6 +462,14 @@ class WebAdminIntegrationTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPError) as err:
             await self._get("/api/pet/test-pet/clip/../manifest")
         self.assertEqual(err.exception.code, 404)
+
+        with self.assertRaises(HTTPError) as err:
+            await self._post("/api/pets/import", {"url": "https://evil.example/#/pets/foo"})
+        self.assertEqual(err.exception.code, 400)
+
+        with self.assertRaises(HTTPError) as err:
+            await self._post("/api/pets/test-pet/mapping", {"states": {"working": "nonexistent-clip"}})
+        self.assertEqual(err.exception.code, 400)
 
 
 if __name__ == "__main__":

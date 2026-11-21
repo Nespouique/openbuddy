@@ -5,7 +5,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from pc.opencode import Bridge, LEASE_SECONDS, Registry, control, load_discovery
+from pc.opencode import (Bridge, LEASE_SECONDS, Registry, control,
+                         is_background_service_command, load_discovery)
 
 
 def setUpModule():
@@ -185,6 +186,48 @@ class HTTPTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict("os.environ", {"http_proxy": "http://127.0.0.1:1", "HTTP_PROXY": "http://127.0.0.1:1", "no_proxy": "", "NO_PROXY": ""}):
             health = await asyncio.to_thread(control, self.path, "health")
         self.assertTrue(health["read_only"])
+
+    def test_idle_becomes_offline_when_no_interactive_opencode_client_is_open(self):
+        self.assertTrue(is_background_service_command(
+            r'C:\tools\opencode\bin\opencode.exe serve --service'
+        ))
+        self.assertTrue(is_background_service_command(r'"C:\Program Files\OpenCode\opencode.exe" service status'))
+        self.assertFalse(is_background_service_command(r'C:\bin\opencode.exe'))
+        self.assertFalse(is_background_service_command(r'C:\bin\opencode.exe -c'))
+        self.assertFalse(is_background_service_command(r'C:\bin\opencode.exe mini'))
+        self.assertFalse(is_background_service_command(r'C:\bin\opencode.exe C:\work\project'))
+
+        client_state = [False]
+        bridge = Bridge(
+            port=0, no_ble=True, path=Path(self.directory.name) / "client-check.json",
+            mute=True, no_notifications=True,
+            require_opencode_client=True,
+            client_checker=lambda: client_state[0],
+        )
+        bridge.registry.update(message(state="idle", sequence=1))
+        # Service-only idle -> OFFLINE (None)
+        self.assertIsNone(bridge.effective_view())
+
+        # Active work still passes through even if client_checker reports False
+        bridge.registry.update(message(state="working", sequence=2))
+        self.assertEqual(bridge.effective_view()["state"], "working")
+
+        # Back to idle with an interactive terminal open -> READY (idle)
+        bridge.registry.update(message(state="idle", sequence=3))
+        client_state[0] = True
+        bridge._client_check_at = -float("inf")
+        self.assertEqual(bridge.effective_view()["state"], "idle")
+
+        # Unknown checker result (None) does not force OFFLINE
+        client_state[0] = None
+        bridge._client_check_at = -float("inf")
+        self.assertEqual(bridge.effective_view()["state"], "idle")
+
+        # Disabling require_opencode_client shows idle even with service only
+        client_state[0] = False
+        bridge.require_opencode_client = False
+        bridge._client_check_at = -float("inf")
+        self.assertEqual(bridge.effective_view()["state"], "idle")
 
 
 class CommandLineTests(unittest.TestCase):

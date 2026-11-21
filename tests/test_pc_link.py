@@ -1,9 +1,14 @@
 import asyncio
+import importlib
+from pathlib import Path
+import sys
 import unittest
 from unittest.mock import patch
 
 from c6lcd.buddy_protocol import CHUNK_SIZE, Decoder, encode
-from pc.buddy import Link, find_device
+from pc.buddy import Link
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class FakeClient:
@@ -45,10 +50,17 @@ class LinkTests(unittest.IsolatedAsyncioTestCase):
         link.notification(None, encode({"v": 1, "event": "button", "press": "short"}))
         self.assertEqual(events[0]["event"], "button")
 
-    async def test_windows_explicit_address_does_not_require_advertising(self):
-        with patch("pc.buddy.sys.platform", "win32"):
-            device = await find_device("AC:EB:E6:3E:B2:26", 1)
-        self.assertEqual(device.address, "AC:EB:E6:3E:B2:26")
+    def test_no_bleak_dependency_in_code_or_requirements(self):
+        for rel in ("pc/requirements.txt", "distribution/workplace/requirements-usb.txt"):
+            content = (ROOT / rel).read_text(encoding="utf-8").lower()
+            self.assertNotIn("bleak", content, rel)
+
+        # Ensure pc.buddy and pc.opencode reload cleanly even when bleak cannot be imported.
+        with patch.dict(sys.modules, {"bleak": None, "bleak.exc": None, "bleak.backends.device": None}):
+            import pc.buddy
+            import pc.opencode
+            importlib.reload(pc.buddy)
+            importlib.reload(pc.opencode)
 
 
 if __name__ == "__main__":

@@ -3,10 +3,13 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from PIL import Image
 
-from pc.pet import CLIPS, STATE_CLIPS, clip_frames, convert, rgb565, valid_id
+from pc.pet import (CLIPS, OUTPUT_SIZE, STATE_CLIPS, clip_frames, convert,
+                    has_pillow, parse_codex_pet_url, rgb565, valid_id,
+                    write_pack_from_clips)
 
 
 class ConversionTests(unittest.TestCase):
@@ -67,3 +70,50 @@ class ConversionTests(unittest.TestCase):
         for value in ("../escape", "a/b", "", "UPPER", "a\\b"):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 valid_id(value)
+
+    def test_parse_codex_pet_url_accepts_hash_path_and_slug(self):
+        self.assertEqual(parse_codex_pet_url("https://codex-pets.net/#/pets/ferris-rust-crab"), "ferris-rust-crab")
+        self.assertEqual(parse_codex_pet_url("https://codex-pets.net/#/pets/monthly-salary-cat"), "monthly-salary-cat")
+        self.assertEqual(parse_codex_pet_url("https://codex-pets.net/pets/ferris-rust-crab/?v=1"), "ferris-rust-crab")
+        self.assertEqual(parse_codex_pet_url("  ferris-rust-crab  "), "ferris-rust-crab")
+        for bad in (
+            "",
+            "http://codex-pets.net/#/pets/ferris-rust-crab",
+            "https://evil.example/#/pets/ferris-rust-crab",
+            "https://codex-pets.net/#/other/page",
+            "https://codex-pets.net/#/pets/../escape",
+        ):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                parse_codex_pet_url(bad)
+
+    def test_write_pack_from_clips_without_pillow_and_custom_mapping(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "ferris-rust-crab"
+            frame_bytes = OUTPUT_SIZE[0] * OUTPUT_SIZE[1] * 2
+            clip_payloads = {
+                "idle": (b"\x00\x00" * (OUTPUT_SIZE[0] * OUTPUT_SIZE[1] * 2), 2),
+                "waving": (b"\xf8\x00" * (OUTPUT_SIZE[0] * OUTPUT_SIZE[1] * 4), 4),
+            }
+            manifest = write_pack_from_clips(
+                output,
+                "ferris-rust-crab",
+                {"name": "Ferris", "author": "mahirmehtizadee"},
+                clip_payloads,
+                states={"thinking": "waving", "working": "waving"},
+            )
+            self.assertEqual(manifest["id"], "ferris-rust-crab")
+            self.assertEqual(manifest["states"]["thinking"], "waving")
+            self.assertEqual(manifest["states"]["working"], "waving")
+            self.assertEqual(manifest["states"]["error"], "idle")
+            self.assertEqual((output / "waving.rgb565").stat().st_size, 4 * frame_bytes)
+            self.assertTrue((output / "manifest.json").is_file())
+
+    def test_has_pillow_returns_false_when_pil_is_missing(self):
+        with patch("importlib.util.find_spec", side_effect=ModuleNotFoundError("No module named 'PIL'")):
+            self.assertFalse(has_pillow())
+        with patch("importlib.util.find_spec", return_value=None):
+            self.assertFalse(has_pillow())
+
+
+if __name__ == "__main__":
+    unittest.main()
