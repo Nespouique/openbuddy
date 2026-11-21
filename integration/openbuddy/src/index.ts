@@ -16,6 +16,8 @@ const EVENTS = [
   "form.created", "form.replied", "form.cancelled",
 ] as const
 
+const STALE_BUSY_MS = 30 * 60_000
+
 function directory(value: string) {
   const result = normalize(value).replace(/[\\/]+$/, "")
   return process.platform === "win32" ? result.toLowerCase() : result
@@ -59,7 +61,11 @@ export default {
             directory: ctx.location.directory, limit: 100, archived: false,
           }, { signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]) })
           for (const session of page.data) {
-            sessions.push({ id: session.id, busy: (session.time.busy ?? 0) > (session.time.idle ?? 0) })
+            // A session killed mid-run keeps busy > idle forever; trust that flag only while it is recent
+            // or already confirmed busy by live events.
+            const flagged = (session.time.busy ?? 0) > (session.time.idle ?? 0)
+            const recent = Date.now() - Math.max(session.time.updated ?? 0, session.time.busy ?? 0) < STALE_BUSY_MS
+            sessions.push({ id: session.id, busy: flagged && (recent || tracker.sessions.get(session.id)?.busy === true) })
           }
           cursor = page.cursor.next ?? undefined
           if (!cursor) break
