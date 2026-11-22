@@ -45,7 +45,7 @@ class PackageTests(unittest.TestCase):
             self.assertFalse(any(name.startswith(prefix + "c6lcd/buddy_usb") or name.endswith("deploy.py")
                                  for name in names))
             self.assertIn(b"pyserial", archive.read(prefix + "requirements.txt"))
-            self.assertNotIn(b"bleak", archive.read(prefix + "requirements.txt"))
+            self.assertIn(b"bleak", archive.read(prefix + "requirements.txt"))
             self.assertNotIn(b"mpremote", archive.read(prefix + "requirements.txt"))
             self.assertIn(prefix + "pc/pet.py", names)
 

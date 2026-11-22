@@ -62,5 +62,5 @@ jobs:
             Write-Host "Release $tag already exists; leaving its assets untouched."
             exit 0
           }
-          gh release create $tag dist/openbuddy-workplace.zip dist/openbuddy-workplace.zip.sha256 dist/openbuddy-workplace-usb.zip dist/openbuddy-workplace-usb.zip.sha256 --repo "$env:GITHUB_REPOSITORY" --target "$env:GITHUB_SHA" --title "OpenBuddy $version - Windows notifications, Bluetooth and USB offline kits" --notes-file distribution/workplace/RELEASE.md
+          gh release create $tag dist/openbuddy-workplace.zip dist/openbuddy-workplace.zip.sha256 dist/openbuddy-workplace-usb.zip dist/openbuddy-workplace-usb.zip.sha256 --repo "$env:GITHUB_REPOSITORY" --target "$env:GITHUB_SHA" --title "OpenBuddy $version - Web console, floating pet, pet collection, USB & Bluetooth offline kits" --notes-file distribution/workplace/RELEASE.md
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

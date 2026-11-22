@@ -841,6 +841,7 @@ PAGE = r"""<!doctype html>
               <label for="cfgTransport">Mode de sortie matériel</label>
               <select id="cfgTransport">
                 <option value="usb">USB Série (ESP32 branché en USB-C)</option>
+                <option value="ble" id="optTransportBle">Bluetooth LE (ESP32 appairé en BLE)</option>
                 <option value="none">Sans ESP32 (pet virtuel &amp; notifications PC uniquement)</option>
               </select>
             </div>
@@ -853,6 +854,14 @@ PAGE = r"""<!doctype html>
                 </select>
                 <button type="button" class="btn btn-subtle" id="refreshPortsBtn">Scanner</button>
               </div>
+            </div>
+
+            <div class="field hidden" id="bleAddressRow">
+              <label for="cfgBleAddress">Adresse ou nom Bluetooth (facultatif)</label>
+              <input id="cfgBleAddress" type="text" maxlength="64" placeholder="Laisser vide pour recherche auto">
+              <small class="muted hidden" id="bleMissingHint" style="display:block;margin-top:4px;color:#ffd3b3;">
+                Module optionnel <code>bleak</code> absent dans cet environnement (installez <code>bleak==3.0.2</code> ou utilisez le kit Bluetooth).
+              </small>
             </div>
 
             <div class="field">
@@ -1092,6 +1101,7 @@ PAGE = r"""<!doctype html>
     function updateTransportRows() {
       const mode = document.getElementById('cfgTransport').value;
       document.getElementById('usbPortRow').classList.toggle('hidden', mode !== 'usb');
+      document.getElementById('bleAddressRow').classList.toggle('hidden', mode !== 'ble');
     }
 
     function populatePorts(selectedPort) {
@@ -1142,6 +1152,7 @@ PAGE = r"""<!doctype html>
       if (app.formDirty) return;
       document.getElementById('cfgTransport').value = cfg.transport || 'usb';
       populatePorts(cfg.serial_port || 'auto');
+      document.getElementById('cfgBleAddress').value = cfg.ble_address || '';
       populatePetSelect(petInfo, cfg.pet || 'auto');
       document.getElementById('cfgSounds').checked = !!cfg.sounds_enabled;
       document.getElementById('cfgNotifs').checked = !!cfg.notifications_enabled;
@@ -1462,10 +1473,18 @@ PAGE = r"""<!doctype html>
       } else if (b.usb_connected) {
         devPill.className = 'pill online';
         document.getElementById('pillDeviceText').textContent = `ESP32 USB (${b.serial_port_active || 'connecté'})`;
+      } else if (b.ble_connected) {
+        devPill.className = 'pill online';
+        document.getElementById('pillDeviceText').textContent = 'ESP32 Bluetooth connecté';
+      } else if (cfg.transport === 'ble' && b.ble_available === false) {
+        devPill.className = 'pill warn';
+        document.getElementById('pillDeviceText').textContent = 'BLE indisponible (bleak absent)';
       } else {
         devPill.className = 'pill warn';
-        document.getElementById('pillDeviceText').textContent = 'ESP32 USB en attente…';
+        document.getElementById('pillDeviceText').textContent = cfg.transport === 'usb' ? 'ESP32 USB en attente…' : 'ESP32 BLE en attente…';
       }
+      const bleHint = document.getElementById('bleMissingHint');
+      if (bleHint) bleHint.classList.toggle('hidden', b.ble_available !== false);
 
       const qPill = document.getElementById('pillQuota');
       if (b.quota) {
@@ -1523,7 +1542,7 @@ PAGE = r"""<!doctype html>
       // Diagnostics grid
       const devStatus = b.device_status || {};
       const items = [
-        ['Transport actif', cfg.transport === 'none' ? 'Virtuel (aucun)' : 'USB Série'],
+        ['Transport actif', cfg.transport === 'none' ? 'Virtuel (aucun)' : cfg.transport.toUpperCase()],
         ['Firmware ESP32', devStatus.firmware || '—'],
         ['Carte SD / Pet ESP32', devStatus.sd === true ? (devStatus.pet || 'SD OK (robot)') : (devStatus.sd === false ? 'Absente' : '—')],
         ['Dernier état envoyé', b.last_delivered ? `${b.last_delivered.state} (${b.last_delivered.label || '—'})` : 'Aucun'],
@@ -1675,6 +1694,7 @@ PAGE = r"""<!doctype html>
         ctx.fillText('OPENBUDDY', 12, 22);
         const linkText = !b ? 'CONNECTING'
           : b.usb_connected ? 'USB LINK'
+          : b.ble_connected ? 'BLE SECURE'
           : (data.config.transport === 'none' ? 'VIRTUAL PET' : 'WAIT ESP32');
         ctx.fillStyle = '#788a9e';
         ctx.textAlign = 'right';
@@ -1901,7 +1921,7 @@ PAGE = r"""<!doctype html>
       app.formDirty = true;
       updateTransportRows();
     });
-    ['cfgSerialPort', 'cfgPet', 'cfgSounds', 'cfgNotifs', 'cfgQuota', 'cfgRequireClient'].forEach(id => {
+    ['cfgSerialPort', 'cfgBleAddress', 'cfgPet', 'cfgSounds', 'cfgNotifs', 'cfgQuota', 'cfgRequireClient'].forEach(id => {
       document.getElementById(id).addEventListener('change', () => { app.formDirty = true; });
     });
 
@@ -1918,6 +1938,7 @@ PAGE = r"""<!doctype html>
         const payload = {
           transport: document.getElementById('cfgTransport').value,
           serial_port: document.getElementById('cfgSerialPort').value,
+          ble_address: document.getElementById('cfgBleAddress').value.trim(),
           pet: document.getElementById('cfgPet').value,
           sounds_enabled: document.getElementById('cfgSounds').checked,
           notifications_enabled: document.getElementById('cfgNotifs').checked,

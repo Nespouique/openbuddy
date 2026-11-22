@@ -1,15 +1,38 @@
-"""USB serial diagnostics. Run from the project root: python -m pc.buddy --help."""
+"""USB serial and optional BLE diagnostics. Run from project root: python -m pc.buddy --help."""
 
 import argparse
 import asyncio
+import importlib.util
 import json
 import sys
 import threading
 
-from c6lcd.buddy_protocol import (CHUNK_SIZE, RX_UUID, STATES, VERSION,
+from c6lcd.buddy_protocol import (CHUNK_SIZE, DEVICE_NAME, RX_UUID,
+                                  SERVICE_UUID, STATES, TX_UUID, VERSION,
                                   Decoder, encode, validate_command)
 
 SERIAL_VID = 0x303A  # Espressif USB-Serial-JTAG
+
+
+def has_bleak():
+    """Return True if optional bleak BLE support is installed."""
+    try:
+        return importlib.util.find_spec("bleak") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def _import_bleak():
+    try:
+        from bleak import BleakClient, BleakScanner
+        from bleak.backends.device import BLEDevice
+        from bleak.exc import BleakError
+        return BleakClient, BleakScanner, BLEDevice, BleakError
+    except ImportError as error:
+        raise RuntimeError(
+            "Le mode Bluetooth nécessite la bibliothèque optionnelle 'bleak' "
+            "(pip install bleak==3.0.2). Utilisez le mode USB ou virtuel sans bleak."
+        ) from error
 
 
 class Link:
@@ -170,19 +193,91 @@ class UsbLink(Link):
             self.thread.join(1)
 
 
+async def windows_known_devices():
+    """Use paired devices even while Windows is restoring their HID connection."""
+    if sys.platform != "win32":
+        return []
+    _, _, BLEDevice, _ = _import_bleak()
+    from winrt.windows.devices.bluetooth import BluetoothConnectionStatus, BluetoothLEDevice
+    from winrt.windows.devices.enumeration import DeviceInformation
+
+    selector = BluetoothLEDevice.get_device_selector_from_pairing_state(True)
+    result = []
+    for info in await DeviceInformation.find_all_async_aqs_filter(selector):
+        if info.name != DEVICE_NAME:
+            continue
+        native = await BluetoothLEDevice.from_id_async(info.id)
+        if native is None:
+            continue
+        try:
+            raw_address = "%012X" % native.bluetooth_address
+            address = ":".join(raw_address[index:index + 2] for index in range(0, 12, 2))
+            connected = native.connection_status == BluetoothConnectionStatus.CONNECTED
+            result.append(BLEDevice(address, native.name, {"connected": connected}))
+        finally:
+            native.close()
+    return result
+
+
+async def scan(seconds):
+    _, BleakScanner, _, _ = _import_bleak()
+    matches = await windows_known_devices()
+    for device in matches:
+        status = "connected" if device.details["connected"] else "paired, currently disconnected"
+        print("%s  %s  Windows: %s" % (device.address, device.name, status))
+    devices = await BleakScanner.discover(timeout=seconds, return_adv=True)
+    seen = {device.address for device in matches}
+    for device, advertisement in devices.values():
+        if (SERVICE_UUID in advertisement.service_uuids
+                or advertisement.local_name == DEVICE_NAME or device.name == DEVICE_NAME):
+            if device.address in seen:
+                continue
+            matches.append(device)
+            seen.add(device.address)
+            print("%s  %s  RSSI %s" % (
+                device.address, advertisement.local_name or device.name, advertisement.rssi
+            ))
+    return matches
+
+
+async def find_device(address, timeout):
+    _, BleakScanner, BLEDevice, _ = _import_bleak()
+    if address:
+        if sys.platform == "win32":
+            return BLEDevice(address, DEVICE_NAME, None)
+        device = await BleakScanner.find_device_by_address(address, timeout=timeout)
+        if device is None:
+            raise ConnectionError("OpenBuddy address not found")
+        return device
+    devices = await windows_known_devices()
+    if not devices:
+        devices = await scan(timeout)
+    if not devices:
+        raise ConnectionError("OpenBuddy not found; check power and Bluetooth")
+    if len(devices) != 1:
+        raise ConnectionError("Several devices found; select one with --address")
+    return devices[0]
+
+
 async def activity(link, args):
     print(json.dumps(await link.request("status")))
     if args.command == "status":
         return
     if args.command == "demo":
+        label = "USB diagnostic" if args.serial else "BLE diagnostic"
         for state in STATES:
             print("State:", state)
-            await link.request("state", state=state, label="USB diagnostic")
+            await link.request("state", state=state, label=label)
             await asyncio.sleep(args.interval)
         await link.request("state", state="idle", label="Demo complete")
     elif args.command == "set":
         print(json.dumps(await link.request("state", state=args.state, label=args.label)))
         await asyncio.sleep(args.duration)
+    elif args.command == "hid-test":
+        await link.request("hid_arm")
+        print("F13 armed for 15s. Focus a keyboard tester, then briefly press BOOT.")
+        print("No key is sent without that physical press.")
+        await asyncio.sleep(15)
     elif args.command == "watch":
         print("Listening to device events. Ctrl+C to stop.")
         await asyncio.Future()
@@ -206,6 +301,23 @@ async def supervise(link, args):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+async def connected(args):
+    BleakClient, _, _, _ = _import_bleak()
+    device = await find_device(args.address, args.scan_timeout)
+    link = None
+
+    def disconnected(client):
+        if link is not None:
+            link.lost(client)
+
+    # Only resolve our custom service. Windows owns HID and can deny app access to it.
+    async with BleakClient(device, services=[SERVICE_UUID], pair=args.pair,
+                           timeout=90, disconnected_callback=disconnected) as client:
+        link = Link(client, lambda event: print("Event:", json.dumps(event)))
+        await client.start_notify(TX_UUID, link.notification)
+        await supervise(link, args)
+
+
 async def usb_connected(args):
     port = await asyncio.to_thread(find_serial_port, args.serial)
     link = await UsbLink.open(port, lambda event: print("Event:", json.dumps(event)))
@@ -216,20 +328,34 @@ async def usb_connected(args):
 
 
 async def main_async(args):
+    use_usb = bool(args.serial) or (not args.ble and not args.address and not args.pair and not has_bleak())
+    if use_usb and not args.serial:
+        args.serial = "auto"
     if args.command == "scan":
-        from serial.tools import list_ports
+        if use_usb:
+            from serial.tools import list_ports
 
-        ports = [item for item in list_ports.comports() if item.vid == SERIAL_VID]
-        for item in ports:
-            print("%s  %s" % (item.device, item.description))
-        if not ports:
-            raise ConnectionError("No OpenBuddy USB serial port found")
+            ports = [item for item in list_ports.comports() if item.vid == SERIAL_VID]
+            for item in ports:
+                print("%s  %s" % (item.device, item.description))
+            if not ports:
+                raise ConnectionError("No OpenBuddy USB serial port found")
+        elif not await scan(args.scan_timeout):
+            raise ConnectionError("No OpenBuddy found")
         return
+    ble_error = _import_bleak()[3] if not use_usb else ()
     while True:
         try:
-            await usb_connected(args)
+            await (usb_connected if use_usb else connected)(args)
             return
         except (ConnectionError, OSError, TimeoutError) as error:
+            if args.command != "watch":
+                raise
+            print("Connection lost:", error, "- retrying in 3s", file=sys.stderr)
+            await asyncio.sleep(3)
+        except Exception as error:
+            if not (ble_error and isinstance(error, ble_error)):
+                raise
             if args.command != "watch":
                 raise
             print("Connection lost:", error, "- retrying in 3s", file=sys.stderr)
@@ -237,11 +363,15 @@ async def main_async(args):
 
 
 def parser():
-    result = argparse.ArgumentParser(description="OpenBuddy USB serial diagnostic bridge")
-    result.add_argument("--serial", metavar="PORT", default="auto",
-                        help="USB serial port (COMx, or auto; default: auto)")
+    result = argparse.ArgumentParser(description="OpenBuddy USB and optional BLE diagnostic bridge")
+    result.add_argument("--address", help="Select a Bluetooth address (requires optional bleak)")
+    result.add_argument("--ble", action="store_true", help="Force Bluetooth LE transport (requires optional bleak)")
+    result.add_argument("--serial", metavar="PORT",
+                        help="Use the USB serial port (COMx, or auto)")
+    result.add_argument("--pair", action="store_true", help="Request OS pairing; open the BOOT pairing window first")
+    result.add_argument("--scan-timeout", type=float, default=5)
     commands = result.add_subparsers(dest="command", required=True)
-    commands.add_parser("scan", help="List detected Espressif USB serial ports")
+    commands.add_parser("scan", help="List OpenBuddy USB serial ports or Bluetooth devices")
     commands.add_parser("status", help="Connect and read firmware status")
     commands.add_parser("watch", help="Listen to device events, with reconnection")
     demo = commands.add_parser("demo", help="Cycle through all display/halo states")
@@ -250,23 +380,27 @@ def parser():
     state.add_argument("state", choices=STATES)
     state.add_argument("--label", default="", help="At most 24 characters")
     state.add_argument("--duration", type=float, default=30)
+    commands.add_parser("hid-test", help="Arm one physical BOOT press to send F13 (BLE only)")
     return result
 
 
 def main():
     args = parser().parse_args()
-    if getattr(args, "interval", 1) <= 0 or getattr(args, "duration", 1) <= 0:
-        parser().error("Durations must be positive")
+    if args.scan_timeout <= 0 or getattr(args, "interval", 1) <= 0 or getattr(args, "duration", 1) <= 0:
+        parser().error("Timeouts and durations must be positive")
     if len(getattr(args, "label", "")) > 24:
         parser().error("Label must contain at most 24 characters")
     try:
         asyncio.run(main_async(args))
     except KeyboardInterrupt:
         pass
-    except (ConnectionError, OSError, TimeoutError, ValueError) as error:
+    except Exception as error:
         print("Error:", error, file=sys.stderr)
-        print("Check the USB cable, the COM port (--serial COMx) and that no other "
-              "program (bridge, mpremote) is using it.", file=sys.stderr)
+        if args.serial or not has_bleak():
+            print("Check the USB cable, the COM port (--serial COMx) and that no other "
+                  "program (bridge, mpremote) is using it.", file=sys.stderr)
+        else:
+            print("Pair OpenBuddy in Windows Bluetooth settings with the BOOT window open.", file=sys.stderr)
         raise SystemExit(1)
 
 

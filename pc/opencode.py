@@ -18,8 +18,8 @@ import tempfile
 import time
 from urllib.request import ProxyHandler, Request, build_opener
 
-from c6lcd.buddy_protocol import STATES
-from pc.buddy import UsbLink, find_serial_port
+from c6lcd.buddy_protocol import SERVICE_UUID, STATES, TX_UUID
+from pc.buddy import Link, UsbLink, find_device, find_serial_port, has_bleak
 from pc.notifications import SOUND_ALIASES, SoundNotifier
 from pc.pet import (CLIP_LABELS, CLIPS, STATE_CLIPS, clip_frames, convert,
                     default_states_for_clips, fetch_codex_pet, has_pillow,
@@ -35,7 +35,7 @@ from pc.web_admin import DEFAULT_WEB_PORT, WebAdminRunner
 LEASE_SECONDS = 12
 PRIORITY = {"permission": 100, "question": 90, "working": 60, "retry": 55,
             "thinking": 50, "error": 40, "success": 30, "idle": 0}
-VALID_TRANSPORTS = ("usb", "none")
+VALID_TRANSPORTS = ("usb", "ble", "none")
 
 
 def discovery_path():
@@ -58,6 +58,7 @@ def default_bridge_config():
     return {
         "transport": "usb",
         "serial_port": "auto",
+        "ble_address": "",
         "sounds_enabled": True,
         "notifications_enabled": True,
         "quota_enabled": True,
@@ -79,13 +80,18 @@ def validate_bridge_config(updates):
     if "transport" in updates:
         value = updates["transport"]
         if value not in VALID_TRANSPORTS:
-            raise ValueError("Invalid transport: must be usb or none")
+            raise ValueError("Invalid transport: must be usb, ble, or none")
         cleaned["transport"] = value
     if "serial_port" in updates:
         value = updates["serial_port"]
         if not isinstance(value, str) or len(value.strip()) > 64:
             raise ValueError("Invalid serial_port")
         cleaned["serial_port"] = value.strip() or "auto"
+    if "ble_address" in updates:
+        value = updates["ble_address"]
+        if not isinstance(value, str) or len(value.strip()) > 64:
+            raise ValueError("Invalid ble_address")
+        cleaned["ble_address"] = value.strip()
     for flag in ("sounds_enabled", "notifications_enabled", "quota_enabled", "require_opencode_client"):
         if flag in updates:
             if type(updates[flag]) is not bool:
@@ -113,9 +119,6 @@ def load_bridge_config(path):
             return config
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
         if isinstance(raw, dict):
-            # Migrate legacy BLE transport configs gracefully to USB.
-            if raw.get("transport") == "ble":
-                raw = dict(raw, transport="usb")
             subset = {k: v for k, v in raw.items() if k in config}
             config.update(validate_bridge_config(subset))
     except (OSError, ValueError, TypeError):
@@ -393,16 +396,26 @@ def has_interactive_opencode_client():
 
 
 class Bridge:
-    def __init__(self, port=19847, no_ble=False, path=None, mute=False, no_notifications=False,
+    def __init__(self, port=19847, address=None, no_ble=False, path=None, mute=False, no_notifications=False,
                  serial_port=None, no_quota=False, quota_path=None, web_port=None, config_path=None,
                  pet="auto", overlay_scale=1, pet_roots=None, overlay_controller=None,
                  port_lister=None, start_overlay=False, pet_fetcher=None,
-                 require_opencode_client=True, client_checker=None):
+                 require_opencode_client=True, client_checker=None, transport=None):
         self.port = port
+        self.address = address or ""
         self.no_ble = no_ble
-        self.transport = "none" if no_ble else "usb"
+        if transport in VALID_TRANSPORTS:
+            self.transport = transport
+        elif serial_port:
+            self.transport = "usb"
+        elif no_ble:
+            self.transport = "none"
+        elif address:
+            self.transport = "ble"
+        else:
+            self.transport = "usb"
         self.serial_port_setting = serial_port or "auto"
-        self.serial_port = None if self.transport == "none" else self.serial_port_setting
+        self.serial_port = self.serial_port_setting if self.transport == "usb" else None
         self.serial_port_active = None
         self.usb_connected = False
         self.ble_connected = False
@@ -505,6 +518,7 @@ class Bridge:
         return {
             "transport": self.transport,
             "serial_port": self.serial_port_setting,
+            "ble_address": self.address,
             "sounds_enabled": self.notifier.enabled,
             "notifications_enabled": self.desktop_notifier.enabled,
             "quota_enabled": not self.no_quota,
@@ -684,6 +698,10 @@ class Bridge:
             self.serial_port = self.serial_port_setting or "auto"
             self.no_ble = False
             self.worker = asyncio.create_task(self.usb_worker())
+        elif self.transport == "ble":
+            self.serial_port = None
+            self.no_ble = False
+            self.worker = asyncio.create_task(self.ble_worker())
         else:
             self.serial_port = None
             self.no_ble = True
@@ -708,6 +726,10 @@ class Bridge:
         if "serial_port" in cleaned and cleaned["serial_port"] != self.serial_port_setting:
             self.serial_port_setting = cleaned["serial_port"]
             if self.transport == "usb":
+                transport_changed = True
+        if "ble_address" in cleaned and cleaned["ble_address"] != self.address:
+            self.address = cleaned["ble_address"]
+            if self.transport == "ble":
                 transport_changed = True
         if "sounds_enabled" in cleaned:
             self.notifier.set_enabled(cleaned["sounds_enabled"])
@@ -817,6 +839,7 @@ class Bridge:
         view = self.registry.current()
         client_active = self._check_opencode_client() if self.require_opencode_client else None
         return {"v": 1, "sources": len(self.registry.sources), "ble_connected": self.ble_connected,
+                "ble_available": has_bleak(),
                 "usb_connected": self.usb_connected,
                 "state": view, "last_delivered": self.last_delivered, "read_only": True,
                 "sounds_enabled": self.notifier.enabled,
@@ -888,6 +911,40 @@ class Bridge:
             self.desktop_notifier.observe(view["state"] if view is not None else None)
             self.quota.observe(view["state"] if view is not None else None)
             await asyncio.sleep(0.25)
+
+    async def ble_worker(self):
+        try:
+            from bleak import BleakClient
+            from bleak.exc import BleakError
+        except ImportError:
+            print("BLE unavailable: optional package 'bleak' is not installed (use USB or virtual mode).", flush=True)
+            return
+        while True:
+            link = None
+            try:
+                device = await find_device(self.address or None, 5)
+
+                def disconnected(client):
+                    if link is not None:
+                        link.lost(client)
+
+                async with BleakClient(device, services=[SERVICE_UUID], timeout=30,
+                                       disconnected_callback=disconnected) as client:
+                    link = Link(client, lambda event: print("Device event:", event.get("event"), "(read-only)", flush=True))
+                    await client.start_notify(TX_UUID, link.notification)
+                    self.device_status = await link.request("status")
+                    self.active_link = link
+                    self.ble_connected = True
+                    print("OpenBuddy BLE connected", flush=True)
+                    await self.deliver_states(link)
+                    raise ConnectionError("BLE connection closed")
+            except (BleakError, ConnectionError, OSError, TimeoutError, ValueError, RuntimeError) as error:
+                print("BLE unavailable:", type(error).__name__, "- retrying", flush=True)
+            finally:
+                self.ble_connected = False
+                if self.active_link is link:
+                    self.active_link = None
+            await asyncio.sleep(3)
 
     async def deliver_states(self, link):
         last, ping_at = None, 0
@@ -964,14 +1021,24 @@ def build_bridge_from_args(args, cfg_path=None):
     saved = load_bridge_config(config_file)
     transport = saved["transport"]
     serial_port = saved["serial_port"] if transport == "usb" else None
+    address = saved["ble_address"] or None
     no_ble = transport == "none"
 
     if args.serial is not None:
+        transport = "usb"
         serial_port = args.serial
         no_ble = False
     elif args.no_ble:
+        transport = "none"
         serial_port = None
         no_ble = True
+    elif getattr(args, "ble", False) or getattr(args, "address", None) is not None:
+        transport = "ble"
+        serial_port = None
+        no_ble = False
+
+    if getattr(args, "address", None) is not None:
+        address = args.address
 
     mute = True if args.mute else (not saved["sounds_enabled"])
     no_notifications = True if args.no_notifications else (not saved["notifications_enabled"])
@@ -980,7 +1047,9 @@ def build_bridge_from_args(args, cfg_path=None):
 
     return Bridge(
         port=args.port,
+        address=address,
         no_ble=no_ble,
+        transport=transport,
         mute=mute,
         no_notifications=no_notifications,
         serial_port=serial_port,
@@ -1025,6 +1094,8 @@ def main():
     parser = argparse.ArgumentParser(description="Read-only OpenCode v2 to OpenBuddy event bridge")
     parser.add_argument("command", choices=("run", "status", "stop", "sound-test", "notification-test"), nargs="?", default="run")
     parser.add_argument("--port", type=int, default=19847)
+    parser.add_argument("--address", help="Bluetooth LE address (switches transport to BLE; requires optional bleak)")
+    parser.add_argument("--ble", action="store_true", help="Drive the device over Bluetooth LE (requires optional bleak)")
     parser.add_argument("--serial", metavar="PORT", help="Drive the device over its USB serial port (COMx, or auto)")
     parser.add_argument("--no-device", "--no-ble", dest="no_ble", action="store_true",
                         help="Run the bridge and virtual pet without an ESP32 device")

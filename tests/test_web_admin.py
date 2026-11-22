@@ -186,29 +186,28 @@ class PetStoreTests(unittest.TestCase):
 
 
 class BridgeConfigTests(unittest.TestCase):
-    def test_config_validation_legacy_ble_migration_and_cli_merge(self):
+    def test_config_validation_and_cli_merge(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_file = Path(tmp) / "bridge-config.json"
-            # Legacy config containing transport="ble" and ble_address migrates cleanly to usb.
-            cfg_file.write_text(json.dumps({
-                "transport": "ble",
-                "ble_address": "AA:BB:CC:DD:EE:FF",
+            save_bridge_config(cfg_file, {
+                "transport": "usb",
+                "ble_address": "",
                 "serial_port": "COM9",
                 "sounds_enabled": False,
                 "notifications_enabled": True,
                 "quota_enabled": False,
+                "require_opencode_client": True,
                 "pet": "builtin",
                 "overlay_scale": 2,
-            }), encoding="utf-8")
+            })
             loaded = load_bridge_config(cfg_file)
             self.assertEqual(loaded["transport"], "usb")
             self.assertEqual(loaded["serial_port"], "COM9")
-            self.assertNotIn("ble_address", loaded)
             self.assertFalse(loaded["sounds_enabled"])
             self.assertEqual(loaded["overlay_scale"], 2)
 
             args = SimpleNamespace(
-                port=19847, serial=None, no_ble=False,
+                port=19847, address=None, ble=False, serial=None, no_ble=False,
                 mute=False, no_notifications=False, no_quota=False,
                 quota_config=None, web_port=8765, no_web=False, overlay=False,
             )
@@ -226,8 +225,14 @@ class BridgeConfigTests(unittest.TestCase):
             bridge_virtual = build_bridge_from_args(args, cfg_path=cfg_file)
             self.assertEqual(bridge_virtual.transport, "none")
 
-        with self.assertRaises(ValueError):
-            validate_bridge_config({"transport": "ble"})
+            # Explicit --ble or --address switches transport to BLE.
+            args.no_ble = False
+            args.address = "AA:BB:CC:DD:EE:FF"
+            bridge_ble = build_bridge_from_args(args, cfg_path=cfg_file)
+            self.assertEqual(bridge_ble.transport, "ble")
+            self.assertEqual(bridge_ble.address, "AA:BB:CC:DD:EE:FF")
+
+        self.assertEqual(validate_bridge_config({"transport": "ble"})["transport"], "ble")
         with self.assertRaises(ValueError):
             validate_bridge_config({"transport": "wifi"})
         with self.assertRaises(ValueError):
@@ -319,7 +324,7 @@ class WebAdminIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Collection de pets", text)
         self.assertIn("Animations disponibles", text)
         self.assertIn("États OpenCode", text)
-        self.assertNotIn("cfgBleAddress", text)
+        self.assertIn("cfgBleAddress", text)
 
         status, raw = await self._get("/api/dashboard")
         self.assertEqual(status, 200)

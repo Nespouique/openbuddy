@@ -12,7 +12,7 @@ import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 PYTHON_VERSIONS = ("3.11", "3.12", "3.13", "3.14")
 FILES = {
     "README.md": "distribution/workplace/README.md",
@@ -48,16 +48,16 @@ def package_name(variant):
 
 
 def requirements_path(variant):
-    return "distribution/workplace/requirements-usb.txt" if variant == "usb" else "pc/requirements.txt"
+    return "distribution/workplace/requirements-usb.txt" if variant == "usb" else "distribution/workplace/requirements-ble.txt"
 
 
 def files_for(variant):
     if variant not in VARIANTS:
         raise ValueError("Unknown kit variant")
     files = dict(FILES)
+    files["requirements.txt"] = files["pc/requirements.txt"] = requirements_path(variant)
     if variant == "usb":
         files["README.md"] = "distribution/workplace/README-usb.md"
-        files["requirements.txt"] = files["pc/requirements.txt"] = requirements_path(variant)
         files["pc/deploy.py"] = "pc/deploy.py"
         for name in ("openbuddy-usb.cmd", "openbuddy-usb-stop.cmd"):
             files["tools/" + name] = "tools/" + name
