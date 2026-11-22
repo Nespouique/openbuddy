@@ -13,6 +13,7 @@ import re
 import secrets
 import shlex
 import struct
+import subprocess
 import sys
 import tempfile
 import time
@@ -1079,6 +1080,140 @@ async def run(args):
         await bridge.close()
 
 
+def request_overlay(web_port, visible=True):
+    """Show or hide the floating pet overlay through the running local web console."""
+    request = Request(
+        "http://127.0.0.1:%d/api/overlay" % web_port,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+        data=json.dumps({"visible": bool(visible)}).encode("utf-8"),
+    )
+    opener = build_opener(ProxyHandler({}))
+    with opener.open(request, timeout=2) as response:
+        return json.loads(response.read(65536))
+
+
+def build_run_command(args, python_executable=None):
+    """Build the detached `pc.opencode run` command line from parsed CLI arguments."""
+    command = [str(python_executable or sys.executable), "-P", "-m", "pc.opencode", "run"]
+    if getattr(args, "port", 19847) != 19847:
+        command.extend(["--port", str(args.port)])
+    if getattr(args, "address", None):
+        command.extend(["--address", str(args.address)])
+    if getattr(args, "ble", False):
+        command.append("--ble")
+    if getattr(args, "serial", None) is not None:
+        command.extend(["--serial", str(args.serial)])
+    if getattr(args, "no_ble", False):
+        command.append("--no-device")
+    if getattr(args, "mute", False):
+        command.append("--mute")
+    if getattr(args, "no_notifications", False):
+        command.append("--no-notifications")
+    if getattr(args, "no_quota", False):
+        command.append("--no-quota")
+    if getattr(args, "quota_config", None):
+        command.extend(["--quota-config", str(args.quota_config)])
+    if getattr(args, "web_port", DEFAULT_WEB_PORT) != DEFAULT_WEB_PORT:
+        command.extend(["--web-port", str(args.web_port)])
+    if getattr(args, "no_web", False):
+        command.append("--no-web")
+    if getattr(args, "overlay", False):
+        command.append("--overlay")
+    if getattr(args, "duration", None) is not None:
+        command.extend(["--duration", str(args.duration)])
+    return command
+
+
+def _tail_log_lines(paths, max_lines=6):
+    lines = []
+    for path in paths:
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        lines.extend(line.strip() for line in text.splitlines() if line.strip())
+    return lines[-max_lines:]
+
+
+def _spawn_detached_bridge(command, log_path, err_path, repo_root):
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(repo_root)
+    kwargs = {
+        "cwd": str(repo_root),
+        "env": env,
+        "stdin": subprocess.DEVNULL,
+        "close_fds": True,
+    }
+    if sys.platform == "win32":
+        kwargs["creationflags"] = (
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        )
+    else:
+        kwargs["start_new_session"] = True
+    with open(log_path, "wb") as stdout_handle, open(err_path, "wb") as stderr_handle:
+        return subprocess.Popen(command, stdout=stdout_handle, stderr=stderr_handle, **kwargs)
+
+
+def ensure_running(args, path=None, wait_seconds=8.0, poll_interval=0.15,
+                   spawner=None, control_fn=None, overlay_fn=None,
+                   clock=time.monotonic, sleeper=time.sleep):
+    """Ensure the OpenBuddy bridge is running; start it detached in the background if needed."""
+    discovery = Path(path) if path is not None else discovery_path()
+    check = control_fn if control_fn is not None else control
+    overlay_requester = overlay_fn if overlay_fn is not None else request_overlay
+
+    try:
+        health = check(discovery, "health")
+    except (OSError, ValueError):
+        health = None
+
+    if health is not None:
+        if getattr(args, "overlay", False) and health.get("web_port"):
+            try:
+                overlay_requester(health["web_port"], True)
+            except (OSError, ValueError):
+                pass
+        return {"started": False, "health": health, "log": None}
+
+    repo_root = Path(__file__).resolve().parents[1]
+    log_path = discovery.parent / "bridge.log"
+    err_path = discovery.parent / "bridge.log.err"
+    command = build_run_command(args)
+    launcher = spawner if spawner is not None else _spawn_detached_bridge
+    process = launcher(command, log_path, err_path, repo_root)
+
+    deadline = clock() + max(0.1, float(wait_seconds))
+    while True:
+        try:
+            health = check(discovery, "health")
+            return {"started": True, "health": health, "log": str(log_path)}
+        except (OSError, ValueError):
+            pass
+        if process is not None and process.poll() is not None:
+            # Another bridge instance may have won a concurrent start race.
+            try:
+                health = check(discovery, "health")
+                return {"started": False, "health": health, "log": None}
+            except (OSError, ValueError):
+                tail = _tail_log_lines((err_path, log_path))
+                detail = (" — " + " | ".join(tail)) if tail else ""
+                raise RuntimeError(
+                    "OpenBuddy bridge exited with code %s (log: %s)%s"
+                    % (process.returncode, log_path, detail)
+                )
+        if clock() >= deadline:
+            tail = _tail_log_lines((err_path, log_path))
+            detail = (" — " + " | ".join(tail)) if tail else ""
+            raise RuntimeError(
+                "Timed out waiting for OpenBuddy bridge to start (log: %s)%s"
+                % (log_path, detail)
+            )
+        sleeper(poll_interval)
+
+
 async def sound_test(muted):
     notifier = SoundNotifier(muted=muted)
     if not notifier.enabled:
@@ -1092,7 +1227,7 @@ async def sound_test(muted):
 
 def main():
     parser = argparse.ArgumentParser(description="Read-only OpenCode v2 to OpenBuddy event bridge")
-    parser.add_argument("command", choices=("run", "status", "stop", "sound-test", "notification-test"), nargs="?", default="run")
+    parser.add_argument("command", choices=("run", "status", "stop", "ensure", "sound-test", "notification-test"), nargs="?", default="run")
     parser.add_argument("--port", type=int, default=19847)
     parser.add_argument("--address", help="Bluetooth LE address (switches transport to BLE; requires optional bleak)")
     parser.add_argument("--ble", action="store_true", help="Drive the device over Bluetooth LE (requires optional bleak)")
@@ -1107,14 +1242,24 @@ def main():
     parser.add_argument("--no-web", action="store_true", help="Disable the local web console")
     parser.add_argument("--overlay", action="store_true", help="Show the floating desktop pet window on startup")
     parser.add_argument("--duration", type=float, help="Stop after this many seconds")
+    parser.add_argument("--wait", type=float, default=8.0, help="Seconds to wait for bridge readiness with 'ensure' (default: 8)")
     args = parser.parse_args()
     if (not (args.port == 0 or 1024 <= args.port <= 65535)
             or not (args.web_port == 0 or 1024 <= args.web_port <= 65535)
-            or (args.duration is not None and args.duration <= 0)):
-        parser.error("Invalid port or duration")
+            or (args.duration is not None and args.duration <= 0)
+            or args.wait <= 0):
+        parser.error("Invalid port, duration, or wait timeout")
     try:
         if args.command == "run":
             asyncio.run(run(args))
+        elif args.command == "ensure":
+            result = ensure_running(args, wait_seconds=args.wait)
+            web_port = result["health"].get("web_port")
+            suffix = " (http://127.0.0.1:%d/)" % web_port if web_port else ""
+            if result["started"]:
+                print("[openbuddy] Bridge started" + suffix, flush=True)
+            else:
+                print("[openbuddy] Bridge already running" + suffix, flush=True)
         elif args.command == "sound-test":
             asyncio.run(sound_test(args.mute))
         elif args.command == "notification-test":
@@ -1131,7 +1276,7 @@ def main():
         if args.command in ("status", "stop"):
             parser.exit(1, "No OpenBuddy bridge is running\n")
         parser.exit(1, "Error: %s\n" % error)
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, RuntimeError) as error:
         parser.exit(1, "Error: %s\n" % error)
 
 

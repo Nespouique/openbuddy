@@ -69,6 +69,25 @@ Ouvrir ensuite **`http://127.0.0.1:8765/`** dans le navigateur :
 
 Options utiles : `--web-port PORT` change le port HTTP local (`8765` par défaut), `--no-web` désactive la console web.
 
+### Alias shell `opencode --pet` (PowerShell et Bash)
+
+Pour démarrer automatiquement le pont en arrière-plan (s'il ne tourne pas déjà) en même temps qu'une session OpenCode :
+
+```powershell
+.\.venv\Scripts\python.exe -m pc.install_alias
+```
+
+Après réouverture du terminal (PowerShell 5.1/7 ou Git Bash / Bash) :
+
+```powershell
+opencode --pet              # démarre le pont si absent, puis lance OpenCode
+opencode --pet-overlay      # idem + ouvre la fenêtre flottante du pet
+opencode --pet -c           # toutes les autres options sont transmises à OpenCode
+opencode                    # sans --pet : lance OpenCode directement sans démarrer le pont
+```
+
+Désinstallation propre : `.\.venv\Scripts\python.exe -m pc.install_alias --uninstall`.
+
 ## Deux modes, le même compagnon
 
 | | Local USB | Bluetooth |
@@ -218,6 +237,7 @@ Un kit existant n'est remplacé qu'avec `--replace`.
 | `pc/notifications.py` | Sons système Windows non bloquants |
 | `pc/toasts.py` | Notifications Windows natives, sans données privées |
 | `pc/install_plugin.py` | Installation globale/par projet sans modifier la configuration |
+| `pc/install_alias.py` | Installation/retrait de l'alias `opencode --pet` pour PowerShell et Bash |
 | `integration/openbuddy/dist/` | Plugin v2 autonome, prêt à installer |
 | `integration/openbuddy/src/` | Sources et tests du plugin |
 | `pc/pet.py` | Conversion et installation des packs |

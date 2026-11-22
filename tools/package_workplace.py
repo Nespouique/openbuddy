@@ -29,6 +29,7 @@ FILES = {
     "pc/toasts.py": "pc/toasts.py",
     "pc/quota.py": "pc/quota.py",
     "pc/install_plugin.py": "pc/install_plugin.py",
+    "pc/install_alias.py": "pc/install_alias.py",
     "c6lcd/buddy_protocol.py": "c6lcd/buddy_protocol.py",
     "plugin/openbuddy/index.js": "integration/openbuddy/dist/index.js",
     "plugin/openbuddy/package.json": "integration/openbuddy/dist/package.json",

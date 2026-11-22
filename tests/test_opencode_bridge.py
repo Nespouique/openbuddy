@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import json
 from pathlib import Path
@@ -5,7 +6,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from pc.opencode import (Bridge, LEASE_SECONDS, Registry, control,
+from pc.opencode import (Bridge, LEASE_SECONDS, Registry, build_run_command,
+                         control, ensure_running,
                          is_background_service_command, load_discovery)
 
 
@@ -246,3 +248,135 @@ class CommandLineTests(unittest.TestCase):
                 self.assertEqual(raised.exception.code, 1)
                 written = "".join(call.args[0] for call in stderr.write.call_args_list)
                 self.assertIn("No OpenBuddy bridge is running", written)
+
+
+class EnsureTests(unittest.TestCase):
+    def _args(self, **overrides):
+        defaults = dict(
+            port=19847, address=None, ble=False, serial=None, no_ble=False,
+            mute=False, no_notifications=False, no_quota=False, quota_config=None,
+            web_port=8765, no_web=False, overlay=False, duration=None,
+        )
+        defaults.update(overrides)
+        return argparse.Namespace(**defaults)
+
+    def test_build_run_command_only_forwards_explicit_overrides(self):
+        cmd = build_run_command(self._args(), python_executable="/usr/bin/python3")
+        self.assertEqual(cmd, ["/usr/bin/python3", "-P", "-m", "pc.opencode", "run"])
+
+        cmd_custom = build_run_command(
+            self._args(no_ble=True, mute=True, overlay=True, web_port=9000),
+            python_executable="/venv/python",
+        )
+        self.assertEqual(
+            cmd_custom,
+            ["/venv/python", "-P", "-m", "pc.opencode", "run",
+             "--no-device", "--mute", "--web-port", "9000", "--overlay"],
+        )
+
+    def test_ensure_does_not_spawn_when_bridge_is_already_running(self):
+        spawned = []
+        overlay_calls = []
+        with tempfile.TemporaryDirectory() as directory:
+            discovery = Path(directory) / "bridge.json"
+            result = ensure_running(
+                self._args(overlay=True),
+                path=discovery,
+                spawner=lambda *a: spawned.append(a),
+                control_fn=lambda _p, _a: {"v": 1, "web_port": 8765},
+                overlay_fn=lambda port, visible: overlay_calls.append((port, visible)),
+            )
+        self.assertFalse(result["started"])
+        self.assertEqual(spawned, [])
+        self.assertEqual(overlay_calls, [(8765, True)])
+
+    def test_ensure_spawns_and_waits_until_bridge_is_healthy(self):
+        spawned = []
+        calls = {"n": 0}
+
+        class FakeProc:
+            returncode = None
+
+            def poll(self):
+                return None
+
+        def fake_control(_path, _action):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise FileNotFoundError("not yet")
+            return {"v": 1, "web_port": 8765}
+
+        def fake_spawn(command, log_path, err_path, repo_root):
+            spawned.append((command, log_path, err_path, repo_root))
+            return FakeProc()
+
+        now = [0.0]
+
+        def fake_sleep(dt):
+            now[0] += dt
+
+        with tempfile.TemporaryDirectory() as directory:
+            discovery = Path(directory) / "bridge.json"
+            result = ensure_running(
+                self._args(overlay=True),
+                path=discovery,
+                wait_seconds=5.0,
+                poll_interval=0.1,
+                spawner=fake_spawn,
+                control_fn=fake_control,
+                clock=lambda: now[0],
+                sleeper=fake_sleep,
+            )
+        self.assertTrue(result["started"])
+        self.assertEqual(len(spawned), 1)
+        self.assertIn("--overlay", spawned[0][0])
+
+    def test_ensure_fails_fast_when_spawned_bridge_exits(self):
+        class DeadProc:
+            returncode = 1
+
+            def poll(self):
+                return 1
+
+        def fake_spawn(_command, _log_path, err_path, _repo_root):
+            err_path.parent.mkdir(parents=True, exist_ok=True)
+            err_path.write_text("Address already in use\n", encoding="utf-8")
+            return DeadProc()
+
+        with tempfile.TemporaryDirectory() as directory:
+            discovery = Path(directory) / "bridge.json"
+            with self.assertRaises(RuntimeError) as raised:
+                ensure_running(
+                    self._args(),
+                    path=discovery,
+                    spawner=fake_spawn,
+                    control_fn=lambda _p, _a: (_ for _ in ()).throw(FileNotFoundError()),
+                )
+        self.assertIn("exited with code 1", str(raised.exception))
+        self.assertIn("Address already in use", str(raised.exception))
+
+    def test_ensure_handles_concurrent_start_race(self):
+        calls = {"n": 0}
+
+        class DeadProc:
+            returncode = 1
+
+            def poll(self):
+                return 1
+
+        def fake_control(_path, _action):
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                raise FileNotFoundError()
+            return {"v": 1, "web_port": 8765}
+
+        with tempfile.TemporaryDirectory() as directory:
+            discovery = Path(directory) / "bridge.json"
+            result = ensure_running(
+                self._args(),
+                path=discovery,
+                spawner=lambda *_a: DeadProc(),
+                control_fn=fake_control,
+            )
+        self.assertFalse(result["started"])
+        self.assertEqual(result["health"]["web_port"], 8765)
